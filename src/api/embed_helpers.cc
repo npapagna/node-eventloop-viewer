@@ -3,6 +3,7 @@
 #include "node.h"
 #include "node_internals.h"
 #include "node_snapshot_builder.h"
+#include "tracing/trace_event.h"
 
 using v8::Context;
 using v8::Function;
@@ -39,16 +40,26 @@ Maybe<ExitCode> SpinEventLoopInternal(Environment* env) {
         node::performance::NODE_PERFORMANCE_MILESTONE_LOOP_START);
     do {
       if (env->is_stopping()) break;
+      env->TraceEvloopAlive("loop-start");
       uv_run(env->event_loop(), UV_RUN_DEFAULT);
       if (env->is_stopping()) break;
+      env->TraceEvloopAlive("loop-exit");
 
       platform->DrainTasks(isolate);
 
       more = uv_loop_alive(env->event_loop());
       if (more && !env->is_stopping()) continue;
 
-      if (EmitProcessBeforeExit(env).IsNothing())
-        break;
+      // Only the main thread's loop is traced (see EvloopPhaseHook).
+      const bool traced = env->is_main_thread();
+      if (traced) {
+        TRACE_EVENT_BEGIN0(TRACING_CATEGORY_NODE1(evloop), "beforeExit");
+      }
+      Maybe<bool> emitted = EmitProcessBeforeExit(env);
+      if (traced) {
+        TRACE_EVENT_END0(TRACING_CATEGORY_NODE1(evloop), "beforeExit");
+      }
+      if (emitted.IsNothing()) break;
 
       {
         HandleScope handle_scope(isolate);

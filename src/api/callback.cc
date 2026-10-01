@@ -2,6 +2,7 @@
 #include "async_wrap-inl.h"
 #include "env-inl.h"
 #include "node.h"
+#include "tracing/trace_event.h"
 #include "v8.h"
 
 namespace node {
@@ -173,8 +174,14 @@ void InternalCallbackScope::Close() {
   auto weakref_cleanup = OnScopeLeave([&]() { env_->RunWeakRefCleanup(); });
 
   Local<Context> context = env_->context();
+  // Only the main thread's loop is traced (see EvloopPhaseHook).
+  const bool traced = env_->is_main_thread();
   if (!tick_info->has_tick_scheduled()) {
+    if (traced) {
+      TRACE_EVENT_BEGIN0(TRACING_CATEGORY_NODE1(evloop), "microtasks");
+    }
     context->GetMicrotaskQueue()->PerformCheckpoint(isolate);
+    if (traced) TRACE_EVENT_END0(TRACING_CATEGORY_NODE1(evloop), "microtasks");
 
     perform_stopping_check();
   }
@@ -201,9 +208,11 @@ void InternalCallbackScope::Close() {
   // to initializes the tick callback during bootstrap.
   CHECK(!tick_callback.IsEmpty());
 
+  if (traced) TRACE_EVENT_BEGIN0(TRACING_CATEGORY_NODE1(evloop), "ticks");
   if (tick_callback->Call(context, process, 0, nullptr).IsEmpty()) {
     failed_ = true;
   }
+  if (traced) TRACE_EVENT_END0(TRACING_CATEGORY_NODE1(evloop), "ticks");
   perform_stopping_check();
 }
 

@@ -770,6 +770,8 @@ class Environment final : public MemoryRetainer {
   ~Environment() override;
 
   void InitializeLibuv();
+  // Emits a `node.evloop` instant event listing what keeps the loop alive.
+  void TraceEvloopAlive(const char* name);
   inline const std::vector<std::string>& exec_argv();
   inline const std::vector<std::string>& argv();
   const std::string& exec_path() const;

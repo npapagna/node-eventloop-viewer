@@ -36,6 +36,7 @@
 #include <cstdio>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -1186,7 +1187,87 @@ void Environment::InitializeMainContext(Local<Context> context,
   }
 }
 
+namespace {
+// Both are written on the main thread. The hook runs on every thread that
+// calls uv_run, so it reads the env only after the loop matches, which means
+// it runs on the main thread too.
+std::atomic<uv_loop_t*> evloop_traced_loop{nullptr};
+Environment* evloop_traced_env = nullptr;
+// Phases whose begin event was emitted, so a stop requested mid-phase still
+// closes them.
+uint32_t evloop_open_phases = 0;
+
+void EvloopPhaseHook(uv_loop_t* loop,
+                     uv_loop_phase phase,
+                     int begin,
+                     int64_t arg) {
+  if (loop != evloop_traced_loop.load(std::memory_order_acquire)) return;
+  Environment* env = evloop_traced_env;
+  static const char* const kPhaseNames[] = {
+      "iteration", "timers", "pending", "idle",
+      "prepare",   "poll",   "check",   "close"};
+  const char* name = kPhaseNames[phase];
+  const uint32_t bit = 1u << phase;
+  if (begin) {
+    // Iterations run while the environment shuts down are not the program's.
+    if (env->is_stopping()) return;
+    evloop_open_phases |= bit;
+    TRACE_EVENT_BEGIN1(TRACING_CATEGORY_NODE1(evloop), name, "timeout", arg);
+  } else {
+    if ((evloop_open_phases & bit) == 0) return;
+    evloop_open_phases &= ~bit;
+    TRACE_EVENT_END0(TRACING_CATEGORY_NODE1(evloop), name);
+    // uv_run decides right after this whether to start another iteration.
+    if (phase == UV_PHASE_ITERATION) env->TraceEvloopAlive("alive");
+  }
+}
+}  // namespace
+
+// Records what keeps the loop alive, named like
+// process.getActiveResourcesInfo(), plus libuv's own verdict, which also
+// counts handles Node does not wrap. Unlike that API, idle handles are left
+// out: a ref'd handle only keeps the loop alive while it is active.
+void Environment::TraceEvloopAlive(const char* name) {
+  if (*TRACE_EVENT_API_GET_CATEGORY_GROUP_ENABLED(
+          TRACING_CATEGORY_NODE1(evloop)) == 0 ||
+      !is_main_thread() || is_stopping()) {
+    return;
+  }
+  std::map<std::string, int> counts;
+  for (ReqWrapBase* req_wrap : *req_wrap_queue()) {
+    AsyncWrap* w = req_wrap->GetAsyncWrap();
+    if (w->persistent().IsEmpty()) continue;
+    counts[w->MemoryInfoName()]++;
+  }
+  for (HandleWrap* w : *handle_wrap_queue()) {
+    if (w->persistent().IsEmpty() || !HandleWrap::HasRef(w) ||
+        !uv_is_active(w->GetHandle())) {
+      continue;
+    }
+    counts[w->MemoryInfoName()]++;
+  }
+  if (timeout_info()[0] > 0) counts["Timeout"] = timeout_info()[0];
+  if (immediate_info()->ref_count() > 0)
+    counts["Immediate"] = immediate_info()->ref_count();
+  std::string resources;
+  for (const auto& [type, count] : counts) {
+    if (!resources.empty()) resources += ',';
+    resources += type + ':' + std::to_string(count);
+  }
+  TRACE_EVENT_INSTANT2(TRACING_CATEGORY_NODE1(evloop),
+                       name,
+                       TRACE_EVENT_SCOPE_THREAD,
+                       "resources",
+                       TRACE_STR_COPY(resources.c_str()),
+                       "alive",
+                       uv_loop_alive(event_loop()));
+}
+
 Environment::~Environment() {
+  if (is_main_thread() && evloop_traced_env == this) {
+    evloop_traced_loop.store(nullptr, std::memory_order_release);
+    evloop_traced_env = nullptr;
+  }
   HandleScope handle_scope(isolate());
   Local<Context> ctx = context();
 
@@ -1278,6 +1359,14 @@ Environment::~Environment() {
 void Environment::InitializeLibuv() {
   HandleScope handle_scope(isolate());
   Context::Scope context_scope(context());
+
+  // Worker threads have their own loops; only the main loop is traced.
+  if (is_main_thread()) {
+    evloop_traced_env = this;
+    evloop_open_phases = 0;
+    evloop_traced_loop.store(event_loop(), std::memory_order_release);
+    uv_set_phase_hook(EvloopPhaseHook);
+  }
 
   CHECK_EQ(0, uv_timer_init(event_loop(), timer_handle()));
   uv_unref(reinterpret_cast<uv_handle_t*>(timer_handle()));

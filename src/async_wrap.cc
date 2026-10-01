@@ -679,8 +679,15 @@ MaybeLocal<Value> AsyncWrap::MakeCallback(const Local<Function> cb,
 
   ProviderType provider = provider_type();
   async_context context { get_async_id(), get_trigger_async_id() };
+  // Only the main thread's loop is traced (see EvloopPhaseHook).
+  const bool traced = env()->is_main_thread();
+  if (traced) {
+    TRACE_EVENT_BEGIN1(TRACING_CATEGORY_NODE1(evloop), "io",
+                       "provider", provider_names[provider]);
+  }
   MaybeLocal<Value> ret = InternalMakeCallback(
       env(), object(), object(), cb, argc, argv, context, context_frame());
+  if (traced) TRACE_EVENT_END0(TRACING_CATEGORY_NODE1(evloop), "io");
 
   // This is a static call with cached values because the `this` object may
   // no longer be alive at this point.
