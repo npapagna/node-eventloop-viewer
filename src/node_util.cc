@@ -255,6 +255,23 @@ static void ParseEnv(const FunctionCallbackInfo<Value>& args) {
   }
 }
 
+// Returns [script name, start offset] of a function's source, so the
+// event loop tracer can tell which function a queued callback is.
+static void GetFunctionSourcePosition(
+    const FunctionCallbackInfo<Value>& args) {
+  if (!args[0]->IsFunction()) return;
+  Isolate* isolate = args.GetIsolate();
+  Local<Function> fn = args[0].As<Function>();
+  Local<Value> bound = fn->GetBoundFunction();
+  if (bound->IsFunction()) fn = bound.As<Function>();
+  // Builtins, such as a promise's resolve function, have no script.
+  Local<Value> name = fn->GetScriptOrigin().ResourceName();
+  int pos = fn->GetScriptStartPosition();
+  if (name.IsEmpty() || !name->IsString() || pos < 0) return;
+  Local<Value> result[] = {name, Integer::New(isolate, pos)};
+  args.GetReturnValue().Set(Array::New(isolate, result, arraysize(result)));
+}
+
 static void GetCallSites(const FunctionCallbackInfo<Value>& args) {
   Isolate* isolate = args.GetIsolate();
   Local<Context> context = isolate->GetCurrentContext();
@@ -498,6 +515,7 @@ void RegisterExternalReferences(ExternalReferenceRegistry* registry) {
   registry->Register(GetCallerLocation);
   registry->Register(PreviewEntries);
   registry->Register(GetCallSites);
+  registry->Register(GetFunctionSourcePosition);
   registry->Register(GetOwnNonIndexProperties);
   registry->Register(GetConstructorName);
   registry->Register(GetExternalValue);
@@ -627,6 +645,10 @@ void Initialize(Local<Object> target,
       context, target, "getConstructorName", GetConstructorName);
   SetMethodNoSideEffect(context, target, "getExternalValue", GetExternalValue);
   SetMethodNoSideEffect(context, target, "getCallSites", GetCallSites);
+  SetMethodNoSideEffect(context,
+                        target,
+                        "getFunctionSourcePosition",
+                        GetFunctionSourcePosition);
   SetMethod(context, target, "sleep", Sleep);
   SetMethod(context, target, "parseEnv", ParseEnv);
   SetMethod(

@@ -669,6 +669,27 @@ void AsyncWrap::EmitAsyncInit(Environment* env,
 }
 
 
+// "io" events open on the main thread. Only the main thread's loop is traced
+// (see EvloopPhaseHook), so a plain counter is enough.
+static uint32_t evloop_io_depth = 0;
+
+EvloopIoScope::EvloopIoScope(Environment* env,
+                             AsyncWrap::ProviderType provider,
+                             Mode mode) {
+  if (!env->is_main_thread()) return;
+  if (mode == kOutermostOnly && evloop_io_depth > 0) return;
+  open_ = true;
+  evloop_io_depth++;
+  TRACE_EVENT_BEGIN1(TRACING_CATEGORY_NODE1(evloop), "io",
+                     "provider", provider_names[provider]);
+}
+
+EvloopIoScope::~EvloopIoScope() {
+  if (!open_) return;
+  evloop_io_depth--;
+  TRACE_EVENT_END0(TRACING_CATEGORY_NODE1(evloop), "io");
+}
+
 MaybeLocal<Value> AsyncWrap::MakeCallback(const Local<Function> cb,
                                           int argc,
                                           Local<Value>* argv) {
@@ -679,8 +700,12 @@ MaybeLocal<Value> AsyncWrap::MakeCallback(const Local<Function> cb,
 
   ProviderType provider = provider_type();
   async_context context { get_async_id(), get_trigger_async_id() };
-  MaybeLocal<Value> ret = InternalMakeCallback(
-      env(), object(), object(), cb, argc, argv, context, context_frame());
+  MaybeLocal<Value> ret;
+  {
+    EvloopIoScope io_scope(env(), provider, EvloopIoScope::kAlways);
+    ret = InternalMakeCallback(
+        env(), object(), object(), cb, argc, argv, context, context_frame());
+  }
 
   // This is a static call with cached values because the `this` object may
   // no longer be alive at this point.

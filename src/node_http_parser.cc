@@ -333,6 +333,8 @@ class Parser : public AsyncWrap, public StreamListener {
     Local<Value> cb = object()->Get(env()->context(), kOnMessageBegin)
                               .ToLocalChecked();
     if (cb->IsFunction()) {
+      EvloopIoScope io_scope(
+          env(), provider_type(), EvloopIoScope::kOutermostOnly);
       InternalCallbackScope callback_scope(
         this, InternalCallbackScope::kSkipTaskQueues);
 
@@ -494,6 +496,8 @@ class Parser : public AsyncWrap, public StreamListener {
 
     MaybeLocal<Value> head_response;
     {
+      EvloopIoScope io_scope(
+          env(), provider_type(), EvloopIoScope::kOutermostOnly);
       InternalCallbackScope callback_scope(
           this, InternalCallbackScope::kSkipTaskQueues);
       head_response = cb.As<Function>()->Call(
@@ -563,6 +567,8 @@ class Parser : public AsyncWrap, public StreamListener {
 
     MaybeLocal<Value> r;
     {
+      EvloopIoScope io_scope(
+          env(), provider_type(), EvloopIoScope::kOutermostOnly);
       InternalCallbackScope callback_scope(
           this, InternalCallbackScope::kSkipTaskQueues);
       r = cb.As<Function>()->Call(env()->context(), object(), 0, nullptr);

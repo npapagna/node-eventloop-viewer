@@ -249,6 +249,24 @@ class AsyncWrap : public BaseObject {
   double trigger_async_id_ = kInvalidAsyncId;
 };
 
+// Reports a callback from the event loop into JavaScript as a node.evloop
+// "io" event, on the main thread only. MakeCallback opens one for every
+// callback. Code that calls JavaScript without MakeCallback, such as the HTTP
+// parser reading a socket itself, uses kOutermostOnly: it reports nothing
+// when another "io" event is already open, so one callback is never reported
+// twice.
+class EvloopIoScope {
+ public:
+  enum Mode { kAlways, kOutermostOnly };
+  EvloopIoScope(Environment* env, AsyncWrap::ProviderType provider, Mode mode);
+  ~EvloopIoScope();
+  EvloopIoScope(const EvloopIoScope&) = delete;
+  EvloopIoScope& operator=(const EvloopIoScope&) = delete;
+
+ private:
+  bool open_ = false;
+};
+
 }  // namespace node
 
 #endif  // defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS

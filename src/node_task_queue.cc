@@ -5,6 +5,7 @@
 #include "node_external_reference.h"
 #include "node_internals.h"
 #include "node_process-inl.h"
+#include "tracing/trace_event.h"
 #include "util-inl.h"
 #include "v8.h"
 
@@ -139,7 +140,11 @@ static void EnqueueMicrotask(const FunctionCallbackInfo<Value>& args) {
 
 static void RunMicrotasks(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  // Only the main thread's loop is traced (see EvloopPhaseHook).
+  const bool traced = env->is_main_thread();
+  if (traced) TRACE_EVENT_BEGIN0(TRACING_CATEGORY_NODE1(evloop), "microtasks");
   env->context()->GetMicrotaskQueue()->PerformCheckpoint(env->isolate());
+  if (traced) TRACE_EVENT_END0(TRACING_CATEGORY_NODE1(evloop), "microtasks");
 }
 
 static void SetTickCallback(const FunctionCallbackInfo<Value>& args) {
