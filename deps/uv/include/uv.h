@@ -310,6 +310,25 @@ UV_EXTERN int uv_loop_fork(uv_loop_t* loop);
 UV_EXTERN int uv_run(uv_loop_t*, uv_run_mode mode);
 UV_EXTERN void uv_stop(uv_loop_t*);
 
+/* Loop phase observation (evloop-trace fork, not upstream libuv). */
+typedef enum {
+  UV_PHASE_ITERATION,
+  UV_PHASE_TIMERS,
+  UV_PHASE_PENDING,
+  UV_PHASE_IDLE,
+  UV_PHASE_PREPARE,
+  UV_PHASE_POLL,
+  UV_PHASE_CHECK,
+  UV_PHASE_CLOSING
+} uv_loop_phase;
+
+/* `arg` is the poll timeout in ms for UV_PHASE_POLL begin, else 0. */
+typedef void (*uv_phase_hook_cb)(uv_loop_t* loop,
+                                 uv_loop_phase phase,
+                                 int begin,
+                                 int64_t arg);
+UV_EXTERN void uv_set_phase_hook(uv_phase_hook_cb cb);
+
 UV_EXTERN void uv_ref(uv_handle_t*);
 UV_EXTERN void uv_unref(uv_handle_t*);
 UV_EXTERN int uv_has_ref(const uv_handle_t*);

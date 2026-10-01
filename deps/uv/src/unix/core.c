@@ -439,7 +439,9 @@ int uv_run(uv_loop_t* loop, uv_run_mode mode) {
    * execution order of the conceptual event loop. */
   if (mode == UV_RUN_DEFAULT && r != 0 && loop->stop_flag == 0) {
     uv__update_time(loop);
+    UV__PHASE(loop, UV_PHASE_TIMERS, 1, 0);
     uv__run_timers(loop);
+    UV__PHASE(loop, UV_PHASE_TIMERS, 0, 0);
   }
 
   while (r != 0 && loop->stop_flag == 0) {
@@ -447,9 +449,16 @@ int uv_run(uv_loop_t* loop, uv_run_mode mode) {
         uv__queue_empty(&loop->pending_queue) &&
         uv__queue_empty(&loop->idle_handles);
 
+    UV__PHASE(loop, UV_PHASE_ITERATION, 1, 0);
+    UV__PHASE(loop, UV_PHASE_PENDING, 1, 0);
     uv__run_pending(loop);
+    UV__PHASE(loop, UV_PHASE_PENDING, 0, 0);
+    UV__PHASE(loop, UV_PHASE_IDLE, 1, 0);
     uv__run_idle(loop);
+    UV__PHASE(loop, UV_PHASE_IDLE, 0, 0);
+    UV__PHASE(loop, UV_PHASE_PREPARE, 1, 0);
     uv__run_prepare(loop);
+    UV__PHASE(loop, UV_PHASE_PREPARE, 0, 0);
 
     timeout = 0;
     if ((mode == UV_RUN_ONCE && can_sleep) || mode == UV_RUN_DEFAULT)
@@ -457,12 +466,17 @@ int uv_run(uv_loop_t* loop, uv_run_mode mode) {
 
     uv__metrics_inc_loop_count(loop);
 
+    UV__PHASE(loop, UV_PHASE_POLL, 1, timeout);
     uv__io_poll(loop, timeout);
+    UV__PHASE(loop, UV_PHASE_POLL, 0, 0);
 
     /* Process immediate callbacks (e.g. write_cb) a small fixed number of
      * times to avoid loop starvation.*/
-    for (r = 0; r < 8 && !uv__queue_empty(&loop->pending_queue); r++)
+    for (r = 0; r < 8 && !uv__queue_empty(&loop->pending_queue); r++) {
+      UV__PHASE(loop, UV_PHASE_PENDING, 1, 0);
       uv__run_pending(loop);
+      UV__PHASE(loop, UV_PHASE_PENDING, 0, 0);
+    }
 
     /* Run one final update on the provider_idle_time in case uv__io_poll
      * returned because the timeout expired, but no events were received. This
@@ -471,11 +485,18 @@ int uv_run(uv_loop_t* loop, uv_run_mode mode) {
      */
     uv__metrics_update_idle_time(loop);
 
+    UV__PHASE(loop, UV_PHASE_CHECK, 1, 0);
     uv__run_check(loop);
+    UV__PHASE(loop, UV_PHASE_CHECK, 0, 0);
+    UV__PHASE(loop, UV_PHASE_CLOSING, 1, 0);
     uv__run_closing_handles(loop);
+    UV__PHASE(loop, UV_PHASE_CLOSING, 0, 0);
 
     uv__update_time(loop);
+    UV__PHASE(loop, UV_PHASE_TIMERS, 1, 0);
     uv__run_timers(loop);
+    UV__PHASE(loop, UV_PHASE_TIMERS, 0, 0);
+    UV__PHASE(loop, UV_PHASE_ITERATION, 0, 0);
 
     r = uv__loop_alive(loop);
     if (mode == UV_RUN_ONCE || mode == UV_RUN_NOWAIT)

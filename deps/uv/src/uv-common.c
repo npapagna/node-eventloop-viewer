@@ -1039,6 +1039,13 @@ int uv_metrics_info(uv_loop_t* loop, uv_metrics_t* metrics) {
 }
 
 
+uv_phase_hook_cb uv__phase_hook;
+
+void uv_set_phase_hook(uv_phase_hook_cb cb) {
+  uv__phase_hook = cb;
+}
+
+
 uint64_t uv_metrics_idle_time(uv_loop_t* loop) {
   uv__loop_metrics_t* loop_metrics;
   uint64_t entry_time;

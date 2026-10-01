@@ -404,6 +404,13 @@ struct uv__loop_metrics_s {
 };
 
 void uv__metrics_update_idle_time(uv_loop_t* loop);
+
+extern uv_phase_hook_cb uv__phase_hook;
+#define UV__PHASE(loop, phase, begin, arg)                                    \
+  do {                                                                        \
+    if (uv__phase_hook != NULL)                                               \
+      uv__phase_hook((loop), (phase), (begin), (arg));                        \
+  } while (0)
 void uv__metrics_set_provider_entry_time(uv_loop_t* loop);
 
 #ifdef __linux__
