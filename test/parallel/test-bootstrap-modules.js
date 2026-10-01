@@ -63,6 +63,7 @@ expected.beforePreExec = new Set([
   'NativeModule internal/fixed_queue',
   'NativeModule async_hooks',
   'NativeModule internal/process/task_queues',
+  'NativeModule internal/evloop_trace',
   'NativeModule timers',
   'Internal Binding trace_events',
   'NativeModule internal/constants',
