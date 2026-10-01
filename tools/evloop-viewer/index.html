@@ -1,0 +1,3126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="evloop-token" content="__EVLOOP_TOKEN__">
+<title>Event Loop Replay</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --ink: #1d1d1f; --muted: #6b6b70;
+    --line: #e2e2e0; --accent: #2f6fdf; --accent-soft: #e5eeff;
+    --run: #1f8a4c; --run-soft: #e2f4e9; --warn: #b86e00;
+    --tick: #8a3ffc; --micro: #d12771; --timer: #0f62fe; --imm: #007d79; --io: #8e6a00;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    --hl-stmt: #f1efe6; --hl-stack: #9db8f0; --hl-cur: #d4e2ff; --hl-done: #d3f0de; --hl-dim: #ececea;
+    --t-keyword: #cf222e; --t-string: #0a3069; --t-number: #0550ae; --t-regexp: #116329;
+    --t-comment: #6e7781; --t-function: #8250df; --t-property: #953800; --t-literal: #0550ae;
+    --t-builtin: #0969da;
+    --rej: #c0392b; --focus: #2f6fdf;
+    --fs-xs: 11.5px; --fs-sm: 12.5px; --fs-md: 14px; --fs-lg: 16px; --fs-xl: 18px;
+    --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px;
+    --on-c: #fff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #131316; --panel: #1c1c20; --ink: #ececf1; --muted: #9a9aa3;
+      --line: #2e2e34; --accent: #6ea0ff; --accent-soft: #1f2a44;
+      --run: #4cc38a; --run-soft: #17301f; --warn: #f0a640;
+      --tick: #b58cff; --micro: #ff6fa8; --timer: #78a9ff; --imm: #3ddbd9; --io: #e0b84a;
+      --hl-stmt: #25252b; --hl-stack: #4d6aa8; --hl-cur: #22375f; --hl-done: #1b3a28; --hl-dim: #2a2a30;
+      --t-keyword: #ff7b72; --t-string: #a5d6ff; --t-number: #79c0ff; --t-regexp: #7ee787;
+      --t-comment: #8b949e; --t-function: #d2a8ff; --t-property: #ffa657; --t-literal: #79c0ff;
+      --t-builtin: #58a6ff;
+      --rej: #ff8389; --focus: #8ab4ff; --on-c: #121214;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #131316; --panel: #1c1c20; --ink: #ececf1; --muted: #9a9aa3;
+    --line: #2e2e34; --accent: #6ea0ff; --accent-soft: #1f2a44;
+    --run: #4cc38a; --run-soft: #17301f; --warn: #f0a640;
+    --tick: #b58cff; --micro: #ff6fa8; --timer: #78a9ff; --imm: #3ddbd9; --io: #e0b84a;
+    --hl-stmt: #25252b; --hl-stack: #4d6aa8; --hl-cur: #22375f; --hl-done: #1b3a28; --hl-dim: #2a2a30;
+    --t-keyword: #ff7b72; --t-string: #a5d6ff; --t-number: #79c0ff; --t-regexp: #7ee787;
+    --t-comment: #8b949e; --t-function: #d2a8ff; --t-property: #ffa657; --t-literal: #79c0ff;
+    --t-builtin: #58a6ff;
+    --rej: #ff8389; --focus: #8ab4ff; --on-c: #121214;
+  }
+  * { box-sizing: border-box; }
+  html { color-scheme: light dark; }
+  :root[data-theme="light"] { color-scheme: light; }
+  :root[data-theme="dark"] { color-scheme: dark; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+    position: sticky; top: 0; z-index: 2; }
+  header h1 { font-size: var(--fs-lg); margin: 0 12px 0 0; }
+  button, select, label.file { font: inherit; padding: 4px 10px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--ink); cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: default; }
+  label.file input { display: none; }
+  .toggle { display: flex; gap: 4px; align-items: center; color: var(--muted); font-size: var(--fs-md); }
+  #pos { font-family: var(--mono); color: var(--muted); font-size: var(--fs-sm); min-width: 90px; }
+  #scrub { flex: 1 1 200px; }
+  header .group { display: flex; gap: 4px; }
+  #opts { position: relative; margin-left: auto; }
+  #opts summary { cursor: pointer; padding: 4px 10px; border: 1px solid var(--line); border-radius: 6px;
+    list-style: none; color: var(--muted); }
+  #opts .optsBody { position: absolute; right: 0; top: 34px; z-index: 3; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 8px;
+    min-width: 230px; box-shadow: 0 6px 20px rgb(0 0 0 / .12); }
+  main { display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); }
+  /* Focus layout: the code on the left, what just happened and the loop on
+     the right, so one step reads without scrolling. */
+  #stage { display: grid; gap: var(--sp-3); grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas: "src now" "src loop"; grid-template-rows: auto 1fr; align-items: start; }
+  #stage.wide { grid-template-areas: "src now" "loop loop"; grid-template-rows: auto auto; }
+  #sourceBox { grid-area: src; display: flex; flex-direction: column; align-self: stretch; }
+  #explain { grid-area: now; }
+  #loopBox { grid-area: loop; }
+  @media (max-width: 900px) {
+    #stage, #stage.wide { grid-template-columns: minmax(0, 1fr); grid-template-areas: "now" "src" "loop"; grid-template-rows: auto; }
+  }
+  #loopGrid { display: grid; gap: var(--sp-4); grid-template-columns: minmax(0, 1fr) 240px; align-items: start; }
+  #loopBox:not(.wide) #loopGrid { grid-template-columns: minmax(0, 1fr); gap: var(--sp-3); }
+  @media (max-width: 900px) { #loopGrid { grid-template-columns: 1fr; } }
+  #loopSide { display: grid; gap: var(--sp-3); align-content: start; grid-template-columns: minmax(0, 1fr); }
+  #loopBox:not(.wide) #loopSide { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  #loopSide h2 { margin-bottom: var(--sp-1); }
+  #loopRow { display: flex; gap: 6px; align-items: stretch; flex-wrap: wrap; }
+  .lcol { flex: 1 1 110px; min-width: 110px; border: 1px solid var(--line); border-radius: 8px; padding: 6px;
+    display: flex; flex-direction: column; gap: 4px; background: var(--bg); position: relative; }
+  /* Phase help opens under its column; the last columns open leftwards so it stays on screen. */
+  .lcol .help .tip { font-family: system-ui, -apple-system, sans-serif; }
+  .lcol:nth-last-child(-n+3) .help .tip { left: auto; right: 0; }
+  .lcol.small { flex: 0 0 auto; min-width: 0; justify-content: flex-start; background: none; border-style: dashed; }
+  .lcol.small .phase { font-size: var(--fs-xs); }
+  .lcol.active { border-color: var(--accent); background: var(--accent-soft); }
+  .lcol .phase { border: 0; padding: 0 2px; font-weight: 600; color: var(--ink); justify-content: space-between; display: flex; }
+  .lcol.dim .phase { color: var(--muted); font-weight: 400; }
+  .lcol .what { font-size: var(--fs-xs); color: var(--muted); line-height: 1.3; padding: 0 2px; }
+  .lcol .item { margin-bottom: 0; }
+  .item.pseudo { border-left-style: dashed; color: var(--muted); cursor: default; }
+  .item.running { background: var(--run-soft); --c: var(--run); }
+  #loopNext { font-size: var(--fs-xs); color: var(--muted); text-align: right; margin-top: 3px; }
+  #band { margin-top: 10px; border: 1px dashed var(--line); border-radius: 8px; padding: 8px; }
+  #band.active { border: 1px solid var(--micro); background: color-mix(in srgb, var(--micro) 7%, transparent); }
+  .bandHead { font-size: var(--fs-sm); font-weight: 600; margin-bottom: 6px; display: flex; gap: 6px; align-items: center;
+    position: relative; }
+  #band .queues { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  @media (max-width: 700px) { #band .queues { grid-template-columns: 1fr; } }
+  #loopBox .card { margin-top: 8px; }
+  h2 small { text-transform: none; letter-spacing: 0; font-weight: 400; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+  h2 { font-size: var(--fs-sm); text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
+  #phases { display: block; }
+  #phases .arrow { color: var(--line); font-size: var(--fs-sm); }
+  .phase { padding: 3px 8px; border-radius: 6px; color: var(--muted); border: 1px solid var(--line);
+    display: inline-flex; gap: 6px; align-items: baseline; font-family: var(--mono); font-size: var(--fs-sm); }
+  .phase.dim { opacity: .55; }
+  .phase.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .phase small { font-weight: 400; }
+  #iter { text-transform: none; letter-spacing: 0; font-weight: 400; }
+  #explain { font-size: var(--fs-lg); padding: 12px 14px; }
+  #explain .now { font-size: var(--fs-xl); }
+  #explain details.more { margin-top: 8px; }
+  #explain details.more summary { cursor: pointer; color: var(--accent); font-size: var(--fs-md); }
+  .timing { font-size: var(--fs-sm); color: var(--muted); margin-top: 6px; }
+  #explain .site { font-family: var(--mono); font-size: var(--fs-sm); color: var(--muted); display: block; margin-top: 2px; }
+  .queues { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .queue h3 { font-size: var(--fs-md); margin: 0 0 6px; display: flex; justify-content: space-between; }
+  .queue h3 > span:last-child { color: var(--muted); font-weight: 400; }
+  .queue h3 { position: relative; }
+  .qname { display: inline-flex; gap: 5px; align-items: center; }
+  .help { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; flex: none;
+    border: 1px solid var(--line); color: var(--muted); font-size: var(--fs-xs); font-weight: 600; cursor: help; }
+  .help:hover, .help:focus { border-color: var(--accent); color: var(--accent); }
+  .help .tip { display: none; position: absolute; left: 0; top: 100%; z-index: 4; width: 280px; margin-top: 4px;
+    padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+    font-size: var(--fs-sm); font-weight: 400; line-height: 1.45; box-shadow: 0 6px 20px rgb(0 0 0 / .14); cursor: auto;
+    white-space: normal; overflow-wrap: anywhere; } /* Some headings it sits in are nowrap. */
+  .help:hover .tip, .help:focus .tip, .help:focus-within .tip { display: block; }
+  .help .tip::before { content: ''; position: absolute; left: 0; right: 0; top: -8px; height: 8px; }
+  .item { font-family: var(--mono); font-size: var(--fs-sm); padding: 5px 7px; border-radius: 5px;
+    border-left: 3px solid var(--c); background: var(--bg); margin-bottom: 4px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .item.fresh { outline: 2px solid var(--c); }
+  .item .meta { color: var(--muted); }
+  .empty { color: var(--muted); font-size: var(--fs-sm); font-style: italic; }
+  #stack .item { --c: var(--run); background: var(--run-soft); }
+  #stackWrap { margin-top: 12px; }
+  #paused .item { --c: var(--muted); }
+  pre#console { font-family: var(--mono); font-size: var(--fs-sm); margin: 0; white-space: pre-wrap;
+    max-height: 220px; overflow: auto; }
+  pre#console .new { background: var(--run-soft); }
+  #log { font-family: var(--mono); font-size: var(--fs-xs); max-height: 360px; overflow: auto; }
+  #log div { padding: 1px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; color: var(--muted); }
+  #log div.cur { background: var(--accent-soft); color: var(--ink); }
+  #drop { text-align: center; padding: 48px 16px; color: var(--muted);
+    border: 2px dashed var(--line); border-radius: 10px; }
+  #drop code { font-family: var(--mono); }
+  .hidden { display: none !important; }
+  #runGrid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 10px; }
+  @media (max-width: 760px) { #runGrid { grid-template-columns: 1fr; } }
+  #expectWrap { display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-md); color: var(--muted); }
+  #expected { flex: 1; min-height: 120px; resize: vertical; font-family: var(--mono); font-size: var(--fs-sm);
+    line-height: 1.6; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--bg); color: var(--ink); }
+  #runBar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  #runBtn { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  #editor { width: 100%; min-height: 140px; height: 200px; resize: vertical; font-family: var(--mono);
+    font-size: var(--fs-sm); line-height: 1.6; padding: 8px 10px; border: 1px solid var(--line);
+    border-radius: 6px; background: var(--bg); color: var(--ink); tab-size: 2; }
+  #runStatus { font-size: var(--fs-md); color: var(--muted); }
+  #runStatus.err { color: var(--warn); }
+  #stderr { font-family: var(--mono); font-size: var(--fs-sm); white-space: pre-wrap; margin: 8px 0 0;
+    color: var(--t-keyword); max-height: 180px; overflow: auto; }
+  #tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
+  #tabs button { font-family: var(--mono); font-size: var(--fs-sm); padding: 2px 8px; }
+  #tabs button.on { border-color: var(--accent); color: var(--accent); }
+  #codeWrap { display: flex; overflow: auto; border: 1px solid var(--line);
+    border-radius: 6px; background: var(--bg); position: relative; }
+  #gutter, #code { font-family: var(--mono); font-size: var(--fs-sm); line-height: 1.6; margin: 0;
+    padding: 6px 0; white-space: pre; }
+  #gutter { text-align: right; color: var(--muted); padding: 6px 8px; user-select: none;
+    border-right: 1px solid var(--line); position: sticky; left: 0; background: var(--bg); }
+  #gutter .on { color: var(--accent); font-weight: 700; }
+  #code { padding-left: 10px; padding-right: 16px; flex: 1; }
+  .hl-stmt { background: var(--hl-stmt); }
+  .hl-stack { box-shadow: inset 0 -2px 0 var(--hl-stack); }
+  .hl-cur { background: var(--hl-cur); box-shadow: 0 0 0 1px var(--accent); border-radius: 2px; }
+  .hl-done { background: var(--hl-done); box-shadow: 0 0 0 1px var(--run); border-radius: 2px; }
+  #code.dim .hl-cur, #code.dim .hl-done, #code.dim .hl-stmt { background: var(--hl-dim); box-shadow: none; }
+  #srcNote { font-size: var(--fs-sm); color: var(--muted); margin-top: 6px; }
+  #explain .why { font-size: var(--fs-md); margin-top: 8px; }
+  #explain .cause { font-size: var(--fs-md); color: var(--muted); margin-top: 4px; }
+  #explain .note { font-size: var(--fs-md); margin-top: 8px; padding: 8px 10px; border-radius: 6px;
+    background: var(--accent-soft); }
+  #explain .note.warn { background: color-mix(in srgb, var(--warn) 14%, transparent); }
+  a[data-jump-idx], a[data-back] { color: var(--accent); }
+  #upnext, #gotchas { margin: 0 0 4px; padding-left: 20px; font-size: var(--fs-md); }
+  #upnext li, #gotchas li { margin-bottom: 4px; }
+  #upnext .meta { display: block; color: var(--muted); font-size: var(--fs-sm); }
+  #upnext .empty, #gotchas .empty { list-style: none; margin-left: -20px; color: var(--muted); font-style: italic; }
+  #actual { font-size: var(--fs-sm); color: var(--muted); }
+  .t-keyword { color: var(--t-keyword); } .t-string { color: var(--t-string); }
+  .t-number { color: var(--t-number); } .t-regexp { color: var(--t-regexp); }
+  .t-comment { color: var(--t-comment); font-style: italic; } .t-function { color: var(--t-function); }
+  .t-property { color: var(--t-property); } .t-literal { color: var(--t-literal); }
+  .t-builtin { color: var(--t-builtin); }
+  .phase .badge { font-size: var(--fs-xs); font-weight: 400; color: var(--muted); }
+  .phase.active .badge { color: var(--accent); }
+  .card { font-size: var(--fs-sm); line-height: 1.45; margin: 8px 0 2px; padding: 7px 10px; border-radius: 6px;
+    border: 1px solid var(--accent-soft); color: var(--ink); }
+  .card .meta { display: block; color: var(--muted); margin-top: 3px; }
+  #alive { font-size: var(--fs-sm); }
+  #alive ul { margin: 4px 0; padding-left: 18px; }
+  #alive .verdict { color: var(--muted); margin-top: 4px; }
+  #alive .verdict.off { color: var(--warn); }
+  #alive .asof { margin-bottom: 4px; }
+  #alive .asof span { color: var(--muted); }
+  #alive li.ran { color: var(--muted); }
+  .docs { display: block; font-size: var(--fs-sm); color: var(--muted); margin-top: 6px; }
+  .docs a, #gotchas .docs a, .card a { color: var(--muted); }
+  #upnext button.guess { font-family: var(--mono); font-size: var(--fs-sm); padding: 2px 8px; margin: 2px 0; }
+  #explain .reveal { font-size: var(--fs-md); margin-bottom: 8px; padding: 8px 10px; border-radius: 6px;
+    background: var(--run-soft); }
+  #explain .reveal.miss { background: color-mix(in srgb, var(--warn) 14%, transparent); }
+  #compare { font-size: var(--fs-sm); }
+  #compare button { font-size: var(--fs-sm); padding: 2px 8px; margin: 0 4px 6px 0; }
+  #compare table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: var(--fs-xs);
+    table-layout: fixed; margin-top: 6px; }
+  #compare td, #compare th { padding: 2px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    text-align: left; border-bottom: 1px solid var(--line); }
+  #compare th { color: var(--muted); font-weight: 600; }
+  #compare td.n { width: 28px; color: var(--muted); }
+  #compare tr.diff td { background: color-mix(in srgb, var(--warn) 14%, transparent); }
+  #compare .verdict { margin-top: 4px; }
+  #loopBox .item[data-q] { cursor: pointer; }
+  .item.asked { box-shadow: 0 0 0 2px var(--accent); }
+  #waitWhy { font-size: var(--fs-md); margin-top: 10px; padding: 8px 10px; border-radius: 6px; background: var(--accent-soft); }
+  #waitWhy .close { float: right; font-size: var(--fs-sm); padding: 0 6px; }
+  #sideTabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 10px; }
+  #sideTabs button { font-size: var(--fs-sm); padding: 3px 9px; }
+  #sideTabs button.on { border-color: var(--accent); color: var(--accent); }
+  #outBadge.bad, #gotchaBadge { color: var(--warn); }
+  #outBadge.good { color: var(--run); }
+  #expectBox { font-size: var(--fs-md); margin-bottom: 8px; }
+  #expectBox .why { margin-top: 6px; }
+  #expectBox .diff { font-family: var(--mono); font-size: var(--fs-sm); display: grid; grid-template-columns: 22px 1fr 1fr;
+    gap: 1px 8px; margin-top: 8px; }
+  #expectBox .diff .h { color: var(--muted); }
+  #expectBox .diff .bad { background: color-mix(in srgb, var(--warn) 14%, transparent); }
+  #timelineBox .bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  #timelineBox h2 { margin: 0 6px 0 0; }
+  .seg { display: flex; }
+  .seg button { border-radius: 0; font-size: var(--fs-sm); padding: 3px 9px; }
+  .seg button:first-child { border-radius: 6px 0 0 6px; }
+  .seg button:last-child { border-radius: 0 6px 6px 0; border-left: 0; }
+  .seg button.on { border-color: var(--accent); color: var(--accent); }
+  #tlOut, #tlIn { padding: 2px 9px; }
+  .legend { font-size: var(--fs-sm); color: var(--muted); display: flex; gap: 4px 10px; align-items: center; flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--c); margin-right: -6px; }
+  #tl { display: flex; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+  #tlLabels { flex: none; width: 88px; border-right: 1px solid var(--line); font-size: var(--fs-xs); color: var(--muted); position: relative; }
+  #tlLabels div { position: absolute; left: 8px; right: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #tlScroll { flex: 1; overflow-x: auto; overflow-y: hidden; min-width: 0; }
+  #tlInner { position: relative; }
+  .tb { position: absolute; height: 18px; border-radius: 3px; font: var(--fs-xs)/18px var(--mono); padding: 0 4px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; color: var(--on-c); background: var(--c); }
+  .tb.ph { background: var(--accent-soft); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+  .tb.ph.main { background: var(--hl-stmt); color: var(--muted); border-color: var(--line); }
+  .tb.wait { background: color-mix(in srgb, var(--c) 18%, transparent); color: var(--ink);
+    border-left: 2px solid var(--c); height: 14px; font-size: var(--fs-xs); line-height: 14px; border-radius: 0 3px 3px 0; }
+  .tb.act { background: var(--run); }
+  .tb.out { width: 7px !important; padding: 0; background: var(--run); border-radius: 50%; height: 7px; margin-top: 6px; }
+  .tb.cur { outline: 2px solid var(--ink); outline-offset: 1px; z-index: 1; }
+  #tlCursor { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--ink); opacity: .55; pointer-events: none; z-index: 2; }
+  .tlRow { position: absolute; left: 0; right: 0; border-top: 1px dashed var(--line); }
+  /* Compact loop (the default): phases as small boxes that list only what is
+     queued; descriptions, empty states and the phase card wait for Expand. */
+  #loopBox:not(.wide) .lcol { flex: 1 1 64px; min-width: 64px; padding: var(--sp-1) 6px; }
+  #loopBox:not(.wide) .lcol .what, #loopBox:not(.wide) .lcol .empty, #loopBox:not(.wide) #loopNext,
+  #loopBox:not(.wide) #phases .card, #loopBox:not(.wide) #band .empty { display: none; }
+  #loopBox:not(.wide) .lcol.small:not(.active) { display: none; }
+  #loopBox:not(.wide) .lcol .phase { font-size: var(--fs-sm); }
+  #loopBox:not(.wide) #band { margin-top: var(--sp-2); }
+  #loopBox:not(.wide) #band .queues { gap: var(--sp-2); }
+  #loopBox:not(.wide) .queue h3 { margin-bottom: 2px; }
+  #loopBox h2 { display: flex; gap: var(--sp-2); align-items: baseline; flex-wrap: wrap; }
+  #loopBox h2 small { flex: 1; }
+  button.mini { font-size: var(--fs-xs); padding: 1px 8px; text-transform: none; letter-spacing: 0; font-weight: 400; }
+  #codeWrap { flex: 1 1 0; min-height: 280px; max-height: calc(100vh - 150px); }
+  @media (max-width: 900px) { #codeWrap { flex: none; max-height: 60vh; min-height: 0; } }
+  header button.primary { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  #hint { display: flex; gap: var(--sp-3); align-items: center; justify-content: space-between;
+    padding: var(--sp-2) var(--sp-3); border-radius: 10px; background: var(--accent-soft); font-size: var(--fs-sm); }
+  #hint button { flex: none; }
+  kbd { font-family: var(--mono); font-size: var(--fs-xs); padding: 0 5px; border: 1px solid var(--line);
+    border-bottom-width: 2px; border-radius: 4px; background: var(--panel); color: var(--ink); }
+  #opts .keys { display: grid; gap: 3px; font-size: var(--fs-xs); color: var(--muted);
+    border-top: 1px solid var(--line); padding-top: var(--sp-2); }
+  #opts .keys b { color: var(--ink); font-weight: 600; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  #sideBox.collapsed [data-pane] { display: none; }
+  #sideBox.collapsed #sideTabs { margin-bottom: 0; }
+  [data-q], #log div[data-i], .tb[data-i] { cursor: pointer; }
+  #runBox { padding: 6px var(--sp-3); }
+  #runBar { margin-bottom: 0; }
+  #runBar h2 { margin: 0; }
+  #runGrid:not(.hidden) { margin-top: var(--sp-2); }
+  #loopBox:not(.wide) .lcol .phase > span:first-child { white-space: nowrap; }
+  #loopBox:not(.wide) .lcol:first-child { flex-basis: 100px; }
+  #loopBox:not(.wide) #band .queues { display: flex; }
+  #loopBox:not(.wide) #band .queue { flex: 1 1 auto; min-width: 0; }
+  #loopBox:not(.wide) #band .queue:has(.item) { flex: 3 1 0; }
+  #band .queue h3 { white-space: nowrap; gap: var(--sp-2); }
+  @media (max-width: 700px) { #loopBox:not(.wide) #band .queues { flex-direction: column; } }
+  #loopBox:not(.wide) .lcol .item .meta { display: none; }
+  @media (max-width: 700px) { header { position: static; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Event Loop Replay</h1>
+  <div class="group">
+    <button id="first" title="Start (Home)" aria-label="Go to the first step">⏮</button>
+    <button id="back" title="Back (←)" aria-label="Step back">◀</button>
+    <button id="step" class="primary" title="Step (→)" aria-label="Step forward">▶</button>
+    <button id="play" title="Play/Pause (space)">Play</button>
+    <select id="speed" title="Play speed" aria-label="Play speed">
+      <option value="600">slow</option><option value="250" selected>normal</option><option value="60">fast</option>
+    </select>
+  </div>
+  <div class="seg" id="granSeg" role="group" aria-label="Step size">
+    <button data-gran="events" title="One step per thing the event loop does: a phase, a queued or run callback, output">Events</button>
+    <button data-gran="stmt" title="Also one step per statement of your code">Statements</button>
+    <button data-gran="expr" title="Also one step per expression of your code">Expressions</button>
+  </div>
+  <input type="hidden" id="gran" value="events">
+  <div class="group">
+    <button id="nextRun" title="Jump to the next callback run (R)">Next callback</button>
+    <button id="nextPhase" title="Jump to the next phase (P)">Next phase</button>
+    <button id="stepOver" title="Finish the current expression (O)">Step over</button>
+  </div>
+  <input type="range" id="scrub" min="0" max="0" value="0" aria-label="Step">
+  <span id="pos"></span>
+  <details id="opts">
+    <summary>View</summary>
+    <div class="optsBody">
+      <label class="toggle" title="Guess which callback runs next before the viewer shows it"><input type="checkbox" id="predictMode"> predict mode</label>
+      <label class="toggle"><input type="checkbox" id="showInternal"> show Node internals</label>
+      <label class="toggle"><input type="checkbox" id="showEmpty"> show empty phases</label>
+      <label class="toggle">Theme
+        <select id="theme" aria-label="Theme">
+          <option value="">system</option><option value="light">light</option><option value="dark">dark</option>
+        </select></label>
+      <label class="file">Open trace file<input type="file" id="file" accept=".log,.json"></label>
+      <div class="keys"><b>Keys</b>
+        <span><kbd>→</kbd> <kbd>←</kbd> step</span><span><kbd>Home</kbd> <kbd>End</kbd> first, last</span>
+        <span><kbd>Space</kbd> play</span><span><kbd>R</kbd> next callback</span>
+        <span><kbd>P</kbd> next phase</span><span><kbd>O</kbd> step over</span>
+      </div>
+    </div>
+  </details>
+</header>
+<main>
+  <section id="runBox" class="hidden">
+    <div id="runBar">
+      <h2>Run code</h2>
+      <select id="exampleSel" title="Example" aria-label="Example"></select>
+      <button id="runBtn" title="Run (⌘/Ctrl+Enter)">Run ▶</button>
+      <button id="resetBtn" title="Restore the selected example">Reset</button>
+      <button id="codeToggle" title="Show or hide the code editor">Hide code</button>
+      <span id="runStatus"></span>
+    </div>
+    <div id="runGrid">
+      <textarea id="editor" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Code"></textarea>
+      <div id="expectWrap">
+        <label for="expected">What do you expect it to print? <small>(optional, one line each)</small></label>
+        <textarea id="expected" spellcheck="false" autocapitalize="off" autocomplete="off"
+          placeholder="sync start&#10;sync end&#10;nextTick&#10;…"></textarea>
+      </div>
+    </div>
+    <pre id="stderr" class="hidden"></pre>
+  </section>
+  <div id="hint" class="hidden" role="note">
+    <span>Step with <kbd>→</kbd>. <b>Now</b> says what just happened, and <b>Why now?</b> names the Node rule
+      behind it. Switch to <b>Statements</b> or <b>Expressions</b> to step through your code line by line.</span>
+    <button id="hintClose" aria-label="Dismiss this tip">Got it</button>
+  </div>
+  <div id="drop">Run <code>out/Release/node --trace-event-categories node.evloop your-script.js</code>,
+    then open or drop the <code>node_trace.1.log</code> file here.</div>
+  <div id="stage">
+    <section id="sourceBox" class="hidden">
+      <h2>Source</h2>
+      <div id="tabs"></div>
+      <div id="codeWrap"><div id="gutter"></div><pre id="code"></pre></div>
+      <div id="srcNote"></div>
+    </section>
+    <section id="explain" class="hidden" aria-live="polite"></section>
+    <section id="loopBox" class="hidden">
+      <h2><span>Event loop <span id="iter"></span></span>
+        <small>click a queued callback to ask why it hasn't run</small>
+        <button id="loopExpand" class="mini" title="Show each phase with a description, and the loop's side panel in full">Expand</button></h2>
+      <div id="loopGrid">
+        <div>
+          <div id="phases"></div>
+          <div id="band">
+            <div class="bandHead"><span id="bandTitle">After every callback Node runs from the loop</span>
+              <span class="help" tabindex="0" aria-label="Which callbacks count?">?<span class="tip" role="tooltip">
+                <b>Counts:</b> each timer, immediate, I/O and <code>'close'</code> callback Node calls from the loop, and
+                the main script. Node drains these queues when that call returns to it (between timers and between
+                immediates, it drains explicitly).<br><b>Does not count:</b> functions you call yourself, such as a
+                <code>forEach</code> callback or a listener called by <code>emit()</code>. They run inside the current
+                callback, so the drain waits for that outer callback to return.
+                <span class="docs">Docs: <a href="https://nodejs.org/en/learn/asynchronous-work/event-loop-timers-and-nexttick" target="_blank" rel="noopener">Event loop guide</a></span>
+              </span></span></div>
+            <div id="queues"></div>
+          </div>
+          <div id="waitWhy" class="hidden"></div>
+        </div>
+        <div id="loopSide">
+          <div><h2>Running now <small>top is innermost</small></h2><div id="stack"></div></div>
+          <div id="pausedWrap" class="hidden">
+            <h2>Paused at <code>await</code> <small>other code runs until they resume</small></h2>
+            <div id="paused"></div>
+          </div>
+          <div id="pendingWrap" class="hidden">
+            <h2>Waiting on a promise <small>not queued until it settles</small></h2>
+            <div id="pending"></div>
+          </div>
+          <div><h2>Keeping the loop alive</h2><div id="alive"></div></div>
+        </div>
+      </div>
+    </section>
+  </div>
+  <section id="timelineBox" class="hidden">
+    <div class="bar">
+      <h2>Timeline</h2>
+      <div class="seg" role="group" aria-label="Timeline scale">
+        <button id="tlOrder" class="on" title="Equal widths: shows what ran in what order">order</button>
+        <button id="tlReal" title="Widths in milliseconds: shows how long things took">real time</button>
+      </div>
+      <button id="tlOut" title="Zoom out" aria-label="Zoom out">−</button>
+      <button id="tlIn" title="Zoom in" aria-label="Zoom in">+</button>
+      <span class="legend">
+        <i style="--c:var(--timer)"></i>timer <i style="--c:var(--imm)"></i>immediate <i style="--c:var(--io)"></i>I/O
+        <i style="--c:var(--tick)"></i>nextTick <i style="--c:var(--micro)"></i>microtask
+        <i style="--c:var(--rej)"></i>rejection <i style="--c:var(--run)"></i>async call running
+      </span>
+    </div>
+    <div id="tl"><div id="tlLabels"></div><div id="tlScroll"><div id="tlInner"></div></div></div>
+    <div id="timingNote" class="timing hidden"></div>
+  </section>
+  <section id="sideBox" class="hidden">
+    <div id="sideTabs" role="tablist" aria-label="Details">
+      <button role="tab" id="tab-next" data-tab="next" class="on" aria-selected="true" aria-controls="pane-next">Up next</button>
+      <button role="tab" id="tab-output" data-tab="output" aria-selected="false" aria-controls="pane-output">Output <span id="outBadge"></span></button>
+      <button role="tab" id="tab-gotchas" data-tab="gotchas" aria-selected="false" aria-controls="pane-gotchas">Gotchas <span id="gotchaBadge"></span></button>
+      <button role="tab" id="tab-compare" data-tab="compare" aria-selected="false" aria-controls="pane-compare">Compare</button>
+      <button role="tab" id="tab-events" data-tab="events" aria-selected="false" aria-controls="pane-events">Events</button>
+    </div>
+    <div data-pane="next" id="pane-next" role="tabpanel" aria-labelledby="tab-next"><ol id="upnext"></ol><div id="actual"></div></div>
+    <div data-pane="output" id="pane-output" role="tabpanel" aria-labelledby="tab-output" class="hidden"><div id="expectBox"></div><pre id="console"></pre></div>
+    <div data-pane="gotchas" id="pane-gotchas" role="tabpanel" aria-labelledby="tab-gotchas" class="hidden"><ul id="gotchas"></ul></div>
+    <div data-pane="compare" id="pane-compare" role="tabpanel" aria-labelledby="tab-compare" class="hidden"><div id="compare"></div></div>
+    <div data-pane="events" id="pane-events" role="tabpanel" aria-labelledby="tab-events" class="hidden"><div id="log"></div></div>
+  </section>
+</main>
+<script>
+'use strict';
+const PHASES = ['main script', 'timers', 'pending', 'idle', 'prepare', 'poll', 'check', 'close', 'beforeExit'];
+const LOOP_PHASES = new Set(PHASES.slice(1, -1));
+// Phases hidden when nothing visible happens inside them.
+const SKIPPABLE_PHASES = new Set(PHASES.slice(1));
+
+// Rules stated in more than one place (queue help, Why now?, why hasn't it run).
+const RULES = {
+  rejectionCheck: 'Node checks for rejections without a handler each time a callback it called from the loop returns, ' +
+    'once the nextTick and microtask queues are empty.',
+  unnamedWork: 'work libuv tracks that Node does not name (for example some fs operations in progress)',
+};
+
+const QUEUES = [
+  { key: 'nextTick', label: 'nextTick queue', color: 'var(--tick)',
+    help: 'Callbacks passed to <code>process.nextTick()</code>. Node runs all of them each time a callback it called ' +
+      'from the loop returns (and after the main script), before any promise job and before the loop goes on.' +
+      '<br><b>Why a separate queue?</b> This one is Node\'s own. <code>process.nextTick()</code> dates from ' +
+      'Node v0.1, years before JavaScript had promises, and V8\'s microtask queue came with them. Node keeps both, ' +
+      'and empties nextTicks first, then microtasks. Recursive nextTicks can starve the loop the same way chained ' +
+      'promises can.<br><b>Which to use?</b> The Node docs suggest <code>queueMicrotask()</code> for new code; ' +
+      '<code>nextTick</code> stays for existing code and Node\'s own internals.' +
+      '<br><b>One exception:</b> in an ES module the top-level code itself runs as a microtask, so there promise ' +
+      'jobs queued at the top level run <i>before</i> nextTicks.',
+    docs: ['nextTick', 'tickVsMicrotask', 'whyNextTick', 'nextTickGuide'] },
+  { key: 'microtask', label: 'microtask queue', color: 'var(--micro)', docs: ['queueMicrotask', 'tickVsMicrotask', 'mdnMicrotask'],
+    help: 'Promise jobs (<code>.then</code>/<code>.catch</code>/<code>.finally</code> callbacks and code after ' +
+      '<code>await</code>) and <code>queueMicrotask()</code> callbacks. V8 runs them right after the nextTick queue ' +
+      'empties, at those same moments, also before the loop goes on.' +
+      '<br><b>Whose queue?</b> This one belongs to V8, the JavaScript engine, and works the same in browsers. ' +
+      'A microtask that queues another microtask runs before anything else gets a turn, so a long chain delays ' +
+      'every timer and I/O callback.' },
+  { key: 'timers', label: 'Timers (by due time)', color: 'var(--timer)', docs: ['setTimeout', 'setInterval'],
+    help: '<code>setTimeout()</code> and <code>setInterval()</code> callbacks, earliest due first. They run in the ' +
+      'timers phase once their delay has passed. The delay is a minimum: a busy loop makes them late.' },
+  { key: 'immediate', label: 'setImmediate queue', color: 'var(--imm)', docs: ['immediate', 'immediateGuide'],
+    help: '<code>setImmediate()</code> callbacks. They run in the check phase, right after poll, once per loop ' +
+      'iteration. One queued while the check phase runs waits for the next iteration.' },
+  { key: 'rejection', label: 'Rejection check', color: 'var(--rej)', docs: ['unhandled', 'rejectionsFlag'],
+    help: `Rejected promises that nothing handles yet. ${RULES.rejectionCheck} Any still without a handler are reported ` +
+      'as unhandled, which by default ends the process.<br><b>Why it waits:</b> a <code>.catch()</code> attached in a nextTick or ' +
+      'promise job still counts as in time, so Node only judges once those queues are empty.' },
+];
+
+// What each phase column of the loop diagram is for, for its "?" tooltip.
+const PHASE_HELP = {
+  'main script': ['Your file\'s top-level code runs first, start to finish, before the loop starts. Everything it ' +
+    'queues waits until it returns. Then Node drains nextTicks and microtasks once, and the loop begins.', ['loop']],
+  poll: ['Where Node waits for I/O: finished file reads, network data, new connections. Their callbacks run here. ' +
+    'With no immediates queued, the loop may sleep in this phase until I/O arrives or the nearest timer is due.',
+    ['pollPhase', 'libuv']],
+  close: ['Runs <code>\'close\'</code> event callbacks for handles closed abruptly. Example: after ' +
+    '<code>socket.destroy()</code>, the socket\'s <code>\'close\'</code> listener runs here. A handle closed ' +
+    'normally emits <code>\'close\'</code> via <code>process.nextTick()</code> instead. ' +
+    '<b>Not traced yet:</b> callbacks in this phase do not show up in the trace.', ['closePhase', 'socketDestroy']],
+  beforeExit: ['When nothing keeps the loop alive, Node emits <code>\'beforeExit\'</code>. A listener that ' +
+    'queues new work (a timer, I/O) starts the loop again; otherwise the process exits.', ['beforeExit']],
+};
+function phaseHelp(p) {
+  const [html, keys] = PHASE_HELP[p];
+  return `<span class="help" tabindex="0" aria-label="What is the ${esc(p)} phase?">?` +
+    `<span class="tip" role="tooltip">${html}${docs(...keys)}</span></span>`;
+}
+const QUEUE_NAMES = { nextTick: 'process.nextTick', microtask: 'microtask',
+  timers: 'timer', immediate: 'setImmediate', rejection: 'rejection' };
+
+let all = [];      // every node.evloop event on the main thread, in file order
+let steps = [];    // the visible subset, one per step
+let internalIds = new Set();
+let names = new Map();   // "queue:id" -> callback name from its enqueue event
+let sources = [];        // instrumented files: { file, text, base, nodes, lineStarts }
+let pinnedFile = null;   // a tab the user picked; cleared on the next step
+let info = [];           // per-event context from analyze(), indexed like `all`
+let notes = new Map();   // event index -> [{ level: 'warn' | 'info', html, more }]
+let gotchas = [];        // { title, html, idx } found in this run
+let enqueueAt = new Map(); // "queue:id" -> index of its enqueue event
+let returnTo = null;     // step to return to after following a cause link
+let userIo = new Set();  // io begin/end events whose callback ran user code
+let shownAlive = new Set(); // "alive" checks worth a step: the first, and any that changed
+let traceLabel = '';     // file or example name of the loaded trace
+// One entry per call of an async function, by activation id:
+// { id, fn, src, name, enterIdx, exitIdx, pauses: [{ at, awaitIdx, resumeIdx, endIdx }] }
+let acts = new Map();
+let cur = 0;
+let snapshots = [];
+let playTimer = null;
+const $ = (id) => document.getElementById(id);
+
+function parseTrace(text) {
+  let json;
+  try { json = JSON.parse(text); } catch {
+    // The writer may not have closed the array if the process crashed.
+    json = JSON.parse(text.replace(/,?\s*$/, '') + ']}');
+  }
+  const events = (json.traceEvents || json).filter((e) =>
+    typeof e.cat === 'string' && e.cat.split(',').includes('node.evloop'));
+  const loopTid = events.find((e) => e.name === 'iteration')?.tid ?? events[0]?.tid;
+  return events.filter((e) => e.tid === loopTid).map((e) => ({ ...normalize(e), ts: e.ts }));
+}
+
+function normalize(e) {
+  // What keeps the loop alive, emitted from C++ at the end of every
+  // iteration and around uv_run.
+  if (e.name === 'alive' || e.name === 'loop-start' || e.name === 'loop-exit') {
+    const resources = String(e.args?.resources ?? '').split(',').filter(Boolean).map((r) => {
+      const [type, count] = r.split(':');
+      return { type, count: +count || 1 };
+    });
+    return { kind: 'alive', what: e.name, alive: !!e.args?.alive, resources };
+  }
+  if (e.ph === 'B' || e.ph === 'E') {
+    const begin = e.ph === 'B';
+    if (e.name === 'io') return { kind: 'io', begin, provider: e.args?.provider };
+    if (e.name === 'microtasks' || e.name === 'ticks') return { kind: 'drain', begin, what: e.name };
+    return { kind: 'phase', begin, phase: e.name, timeout: e.args?.timeout };
+  }
+  let d = e.args?.data ?? {};
+  if (typeof d === 'string') { try { d = JSON.parse(d); } catch { d = {}; } }
+  if (d.queue === 'console') return { kind: 'console', stream: d.op, text: d.text };
+  if (d.queue === 'src') {
+    if (d.op === 'source') return { ...d, kind: 'source' };
+    return { kind: 'src', op: d.op, id: d.id };
+  }
+  if (d.queue === 'act') return { kind: 'act', op: d.op, id: d.id, fn: d.fn, at: d.at };
+  // `d.kind` describes the microtask (promise reaction, queueMicrotask...).
+  const q = { ...d, kind: 'queue', job: d.kind };
+  if (q.queue === 'rejection' && q.op === 'reject') q.name = q.reason;
+  // Promise jobs have no function name of their own; name them after the
+  // `then`/`await` that scheduled them. A thenable job queued by resolving a
+  // promise with another one has no enqueue, so its run carries the name.
+  if ((q.op === 'enqueue' || q.op === 'then' || (q.op === 'run' && q.job)) && q.queue === 'microtask' &&
+      q.job !== 'queueMicrotask') {
+    const m = /^(\S+) .*:(\d+):\d+$/.exec(q.site ?? '');
+    const short = { 'thenable job': 'thenable', 'adopt job': 'adopt' }[q.job] ?? 'reaction';
+    q.name = !m ? q.job : m[1] === '<anonymous>' ? `${short} @ line ${m[2]}` : `${short} @ ${m[1]}:${m[2]}`;
+  }
+  return q;
+}
+
+const isEnqueue = (e) => e.op === 'enqueue' || e.op === 'reject';
+
+// A `.then`/`.catch`/`.finally` on a promise that is still pending: the
+// callback is registered on the promise but not queued anywhere yet. Awaits
+// are left out, since the paused function already shows them.
+const isPendingThen = (e) => e.kind === 'queue' && e.op === 'then' && !e.settled && !e.isAwait &&
+  e.job === 'promise reaction' && !e.internal;
+
+// Who scheduled an id is decided by its first enqueue: an interval re-arms
+// itself from inside Node, but it is still the user's timer.
+function computeInternal(events) {
+  const ids = new Set();
+  const seen = new Set();
+  for (const e of events) {
+    if (e.kind !== 'queue' || e.op === 'ref' || e.op === 'unref') continue;
+    const k = `${e.queue}:${e.id}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    // An id first seen at run time had no enqueue event we could see (e.g.
+    // scheduled before tracing started); treat it as internal too, unless it
+    // is a thenable job from resolving a user promise with another one.
+    if ((!isEnqueue(e) && e.op !== 'then' && !(e.op === 'run' && e.site)) || e.internal) ids.add(k);
+  }
+  return ids;
+}
+
+// An ES module's top-level code runs inside a microtask: Node's loader
+// evaluates it after an `await` in ModuleJob.run(). That job is queued
+// internally, so show it as the user's own: it explains why promise jobs
+// the module queues beat its nextTicks.
+const MODULE_JOB_NAME = 'your module\'s top-level code';
+function markModuleJob(events) {
+  const open = [];
+  for (const e of events) {
+    if (e.kind === 'queue' && e.queue === 'microtask' && e.op === 'run') open.push(e.id);
+    else if (e.kind === 'queue' && e.queue === 'microtask' && e.op === 'done') open.splice(open.lastIndexOf(e.id), 1);
+    else if (e.kind === 'src') {
+      const id = open.at(-1);
+      if (id === undefined || !internalIds.has(`microtask:${id}`)) return;
+      internalIds.delete(`microtask:${id}`);
+      for (const o of events) {
+        if (o.kind !== 'queue' || o.queue !== 'microtask' || o.id !== id) continue;
+        o.moduleBody = true;
+        if (o.op === 'enqueue') o.name = MODULE_JOB_NAME;
+      }
+      return;
+    }
+  }
+}
+
+function isEmptyPhase(events, i) {
+  const e = events[i];
+  if (e.kind !== 'phase' || !SKIPPABLE_PHASES.has(e.phase)) return false;
+  let j = i + (e.begin ? 1 : -1);
+  const dir = e.begin ? 1 : -1;
+  for (; j >= 0 && j < events.length; j += dir) {
+    const o = events[j];
+    if (!visibleContent(o)) continue;
+    return o.kind === 'phase' && o.phase === e.phase && o.begin !== e.begin;
+  }
+  return true;
+}
+
+function granularity() {
+  const g = $('gran').value;
+  return g === 'stmt' || g === 'events' ? g : 'expr';
+}
+
+function visibleContent(e) {
+  if (e.kind === 'source') return false;
+  if (e.kind === 'act') return true;
+  if (e.kind === 'src') {
+    const g = granularity();
+    return g === 'expr' || (g === 'stmt' && e.op === 's');
+  }
+  // An immediate refs itself before it is queued; only later (un)refs matter.
+  if (e.kind === 'queue' && e.early) return false;
+  if (e.kind === 'queue' && e.op === 'then' && !isPendingThen(e)) return false;
+  if (e.kind === 'queue') return $('showInternal').checked || !internalIds.has(`${e.queue}:${e.id}`);
+  if (e.kind === 'io') return $('showInternal').checked || userIo.has(e);
+  if (e.kind === 'drain') return $('showInternal').checked;
+  if (e.kind === 'phase' && e.phase === 'iteration') return false;
+  if (e.kind === 'alive') return e.what !== 'alive' || $('showEmpty').checked || shownAlive.has(e);
+  return true;
+}
+
+function rebuildSteps() {
+  const showEmpty = $('showEmpty').checked;
+  const keepIdx = all[steps[cur]?.idx] ? steps[cur].idx : 0;
+  steps = [];
+  all.forEach((e, idx) => {
+    if (e.kind === 'phase' && e.phase === 'iteration') return;
+    if (!visibleContent(e)) return;
+    if (e.kind === 'phase' && !showEmpty && isEmptyPhase(all, idx)) return;
+    if (e.kind === 'drain' && !e.begin) return;
+    steps.push({ idx });
+  });
+  snapshots = [];
+  $('scrub').max = Math.max(0, steps.length - 1);
+  const near = steps.findIndex((s) => s.idx >= keepIdx);
+  go(near < 0 ? 0 : near);
+}
+
+function emptyState() {
+  return { phase: 'main script', prevPhase: null, phaseSeq: 0, timeout: null, iteration: 0,
+    queues: { nextTick: [], microtask: [], timers: [], immediate: [], rejection: [] }, pending: [],
+    running: [], console: [], fresh: null, src: { last: null, stack: [] }, alive: null };
+}
+
+// The resource type that keeps the loop alive for a queued callback.
+const ALIVE_TYPE = { timers: 'Timeout', immediate: 'Immediate' };
+
+function apply(state, e) {
+  state.fresh = null;
+  switch (e.kind) {
+    case 'phase':
+      if (e.phase === 'iteration') { if (e.begin) state.iteration++; break; }
+      if (e.begin) {
+        state.phase = e.phase;
+        state.phaseSeq++;
+        state.timeout = e.phase === 'poll' ? e.timeout : null;
+      } else {
+        state.prevPhase = e.phase;
+        state.phase = 'between phases';
+      }
+      break;
+    case 'io':
+      if (e.begin) state.running.push({ queue: 'io', id: '', name: ioName(e), label: e.label });
+      else state.running.pop();
+      break;
+    case 'console':
+      state.console.push(e.text);
+      break;
+    case 'drain':
+      if (e.what === 'microtasks') state.inMicrotasks = e.begin;
+      break;
+    case 'alive':
+      state.mainDone = true;
+      state.alive = { what: e.what, alive: e.alive, resources: e.resources, iteration: state.iteration,
+        ran: { Timeout: [], Immediate: [] } };
+      break;
+    case 'src': {
+      const st = state.src;
+      st.last = e.id;
+      if (e.op === 'e') st.stack.push(e.id);
+      else if (e.op === 'x') {
+        // Unwinds anything left open above it (a throw skips their probes).
+        const at = st.stack.lastIndexOf(e.id);
+        if (at >= 0) st.stack.length = at;
+        // What runs next is the enclosing expression, such as the `.then()`
+        // call once `Promise.resolve()` has been evaluated.
+        st.last = st.stack.at(-1) ?? nodeInfo(e.id)?.stmt ?? e.id;
+      }
+      break;
+    }
+    case 'queue': {
+      const q = state.queues[e.queue];
+      if (!q) break;
+      const at = q.findIndex((x) => x.id === e.id);
+      if (e.op === 'ref' || e.op === 'unref') {
+        if (at >= 0) q[at].unref = e.op === 'unref';
+        break;
+      }
+      if (e.queue === 'rejection') {
+        if (e.op === 'reject') {
+          q.push({ id: e.id, name: e.reason, site: e.site });
+          state.fresh = `rejection:${e.id}`;
+        } else if (at >= 0) {
+          q.splice(at, 1);
+        }
+        break;
+      }
+      if (e.op === 'then') {
+        if (isPendingThen(e)) state.pending.push({ id: e.id, name: e.name, code: e.code, line: e.line, site: e.site });
+        break;
+      }
+      if (e.op === 'enqueue' || e.op === 'run') {
+        const p = state.pending.findIndex((x) => x.id === e.id);
+        if (p >= 0) state.pending.splice(p, 1);
+      }
+      if (e.op === 'enqueue') {
+        const item = { id: e.id, name: e.name, code: e.code, line: e.line, site: e.site, delay: e.delay, due: e.due, job: e.job,
+          phase: state.phase, seq: state.phaseSeq, unref: e.unref };
+        // refresh() re-queues a timer that is still pending.
+        if (at >= 0) q.splice(at, 1);
+        q.push(item);
+        // A repeating or refreshed timer is pending again, as libuv would see it.
+        const again = state.alive?.ran[ALIVE_TYPE[e.queue]];
+        if (again?.includes(e.id)) again.splice(again.indexOf(e.id), 1);
+        if (e.queue === 'timers') q.sort((a, b) => a.due - b.due);
+        state.fresh = `${e.queue}:${e.id}`;
+      } else if (e.op === 'run') {
+        // A user callback running means the main script itself has returned.
+        // Node's own jobs run earlier too: they load an ES module.
+        if (!internalIds.has(`${e.queue}:${e.id}`) && !e.moduleBody) state.mainDone = true;
+        const item = at >= 0 ? q.splice(at, 1)[0] : { id: e.id, name: e.name ?? '?' };
+        state.alive?.ran[ALIVE_TYPE[e.queue]]?.push(e.id);
+        state.running.push({ queue: e.queue, ...item });
+      } else if (e.op === 'done') {
+        const r = state.running.findLastIndex((x) => x.queue === e.queue && x.id === e.id);
+        if (r >= 0) state.running.splice(r, 1);
+      } else if (e.op === 'cancel' && at >= 0) {
+        q.splice(at, 1);
+      }
+      break;
+    }
+  }
+}
+
+// State after step `n`, replaying every raw event up to that step so hidden
+// events (internals, empty phases) still update the queues correctly.
+function stateAt(n) {
+  const K = 200;
+  const base = Math.floor(n / K);
+  while (snapshots.length <= base) {
+    const i = snapshots.length;
+    const prev = i === 0 ? { state: emptyState(), upTo: -1 } : snapshots[i - 1];
+    const state = structuredClone(prev.state);
+    const upTo = steps[i * K].idx;
+    for (let j = prev.upTo + 1; j <= upTo; j++) apply(state, all[j]);
+    snapshots.push({ state, upTo });
+  }
+  const snap = snapshots[base];
+  const state = structuredClone(snap.state);
+  for (let j = snap.upTo + 1; j <= steps[n].idx; j++) apply(state, all[j]);
+  return state;
+}
+
+function describe(e, state) {
+  // "fn /long/path/file.js:line:col" reads as "in fn, file.js:line"; the
+  // path is a temp copy and the column points into the instrumented code.
+  const where = (s) => {
+    const m = /^(\S+) .*\/([^/]+:\d+):\d+$/.exec(s ?? '');
+    if (!m) return s ? `<span class="site">${esc(s)}</span>` : '';
+    return `<span class="site">${m[1] === '<anonymous>' ? '' : `in ${esc(m[1])}, `}${esc(m[2])}</span>`;
+  };
+  switch (e.kind) {
+    case 'alive': {
+      const keepers = describeResources(e.resources);
+      if (e.what === 'loop-start')
+        return e.alive ? `The main script is done and Node starts the event loop. Keeping it alive: ${keepers || RULES.unnamedWork}.`
+          : 'The main script is done and nothing keeps the event loop alive, so it ends right away.';
+      if (e.what === 'loop-exit') return 'The event loop has stopped: nothing keeps it alive any more.';
+      return e.alive ? `End of loop iteration ${state.iteration}. Still keeping the loop alive: ${keepers || RULES.unnamedWork}.`
+        : `End of loop iteration ${state.iteration}. Nothing keeps the loop alive any more.`;
+    }
+    case 'phase':
+      if (e.phase === 'beforeExit')
+        return e.begin ? 'Node emits <b><code>\'beforeExit\'</code></b>.' : 'Done emitting <code>\'beforeExit\'</code>.';
+      if (!e.begin) return `Leaving the <b>${e.phase}</b> phase.`;
+      if (e.phase === 'poll') return `Entering <b>poll</b>: ${pollWhy(e, state)}`;
+      if (state.iteration === 0)
+        return `Entering the <b>${e.phase}</b> phase. libuv runs due timers once before the first loop iteration.`;
+      return `Entering the <b>${e.phase}</b> phase (loop iteration ${state.iteration}).`;
+    case 'drain':
+      return e.what === 'ticks' ? 'Node drains the <b>nextTick queue</b>, then microtasks.'
+        : 'V8 drains the <b>microtask queue</b>.';
+    case 'io':
+      return e.begin ? (e.label ? `Running the <b>I/O callback</b> <code>${esc(e.label)}</code> (${esc(e.provider)}).`
+        : `Running an <b>I/O callback</b> (${esc(e.provider)}).`) : 'I/O callback finished.';
+    case 'console':
+      return `Output: <code>${esc(e.text.trimEnd())}</code>`;
+    case 'act': {
+      const a = acts.get(e.id);
+      const who = `<b>${esc(a?.name ?? 'An async function')}</b>`;
+      if (e.op === 'enter') return `${who} starts.`;
+      if (e.op === 'exit') return `${who} finishes.`;
+      const aw = awaitLabel(a, e.at);
+      const what = `<code>${esc(aw.text)}</code> (line ${aw.line})`;
+      if (e.op === 'await') return `${who} pauses at ${what} and gives control back. Other code can run until it resumes.`;
+      return `${who} resumes after ${what}.`;
+    }
+    case 'src': {
+      const n = nodeInfo(e.id);
+      if (!n) return '';
+      const code = `<code>${esc(snippet(n))}</code>`;
+      const at = `<span class="site">${esc(shortFile(n.src.file))}:${lineOf(n.src, n.start)}</span>`;
+      if (e.op === 's') return `Next statement: ${code}${at}`;
+      if (e.op === 'e') return `Evaluating ${code}${at}`;
+      return `Finished evaluating ${code}${at}`;
+    }
+    case 'queue': {
+      const what = QUEUE_NAMES[e.queue] ?? e.queue;
+      const name = e.name && e.name !== '<anonymous>' ? `<code>${esc(e.name)}</code>` : 'a callback';
+      if (e.queue === 'rejection') {
+        if (e.op === 'reject') return `A promise rejected with <code>${esc(e.reason)}</code> and nothing handles it yet.${where(e.site)}`;
+        if (e.op === 'handled') return e.late ? 'A handler was attached to an already reported rejection.'
+          : 'A handler was attached to the rejected promise.';
+        return `Node reports the rejection <code>${esc(nameOf(`rejection:${e.id}`, e.id))}</code> as <b>unhandled</b>.`;
+      }
+      if (e.moduleBody) {
+        if (e.op === 'enqueue') return `Node's ES module loader added <b>${MODULE_JOB_NAME}</b> to the <b>microtask</b> queue: ` +
+          'it evaluates your module after an <code>await</code>, and code after an <code>await</code> resumes in a microtask.';
+        if (e.op === 'run') return `Running <b>${MODULE_JOB_NAME}</b> as a microtask.`;
+        if (e.op === 'done') return `${MODULE_JOB_NAME[0].toUpperCase()}${MODULE_JOB_NAME.slice(1)} finished. V8 keeps draining ` +
+          'the microtask queue, so promise jobs it queued run next, before any nextTick.';
+      }
+      if (e.op === 'then')
+        return `${thenCall(e.site)} was called on a promise that is still <b>pending</b>, so ${name} is ` +
+          '<b>not queued yet</b>. It waits on the promise and joins the microtask queue only when the promise settles.' +
+          where(e.site);
+      if (e.op === 'enqueue' && isUserReaction(e)) {
+        if (e.cause === 'then')
+          return `${thenCall(e.site)} was called on a promise that is already <b>${e.outcome}</b>, so ${name} is ` +
+            `<b>added to the microtask queue right away</b>.${where(e.site)}`;
+        const line = /:(\d+):\d+$/.exec(e.bySite ?? '')?.[1];
+        const by = line ? ` by the code at line ${line}` : ' by code outside your files';
+        return `${name} is now <b>added to the microtask queue</b>: the promise it was waiting on was just ` +
+          `<b>${e.outcome}</b>${by}.`;
+      }
+      if (e.op === 'enqueue') {
+        let extra = '';
+        if (e.queue === 'timers' && e.rearm) return `${name} re-armed by <b>setInterval</b>, due in ${e.delay} ms.`;
+        if (e.queue === 'timers') extra = `, due in ${e.delay} ms`;
+        if (e.queue === 'microtask') extra = e.job === 'queueMicrotask' ? ' via queueMicrotask' : ` (${e.job})`;
+        return `${name} added to the <b>${what}</b> queue${extra}.${where(e.site)}`;
+      }
+      // The same promise id can run twice (reaction, then thenable job), so
+      // prefer the name of the queue entry that is actually running.
+      const runningItem = state.running.findLast((x) => x.queue === e.queue && x.id === e.id);
+      const known = runningItem?.name ?? names.get(`${e.queue}:${e.id}`);
+      const label = `<code>${esc(known && known !== '<anonymous>' ? known : e.id)}</code>`;
+      if (e.op === 'run') return `Running ${what} callback ${label}.`;
+      if (e.op === 'done') return `${what} callback ${label} finished.`;
+      if (e.op === 'cancel') return `${what} ${label} cancelled.`;
+      if (e.op === 'unref') return `${what} ${label} unref'd: it no longer keeps the loop alive. It still runs if something else does.`;
+      if (e.op === 'ref') return `${what} ${label} ref'd again: it keeps the loop alive until it runs.`;
+    }
+  }
+  return '';
+}
+
+function shortLabel(e) {
+  switch (e.kind) {
+    case 'phase': return `${e.begin ? '→' : '←'} ${e.phase}${e.begin && e.phase === 'poll' ? ` (timeout ${e.timeout})` : ''}`;
+    case 'drain': return `drain ${e.what}`;
+    case 'io': return `${e.begin ? '▸' : '◂'} io ${e.provider ?? ''}`;
+    case 'console': return `log ${e.text.trimEnd()}`;
+    case 'act': {
+      const a = acts.get(e.id);
+      const name = a?.name ?? `async #${e.id}`;
+      if (e.op === 'enter') return `▸ ${name} starts`;
+      if (e.op === 'exit') return `◂ ${name} finishes`;
+      return `${e.op === 'await' ? '⏸' : '⏵'} ${name} line ${awaitLabel(a, e.at).line}`;
+    }
+    case 'alive': return `${e.what} ${e.alive ? '● ' + (e.resources.map((r) => r.type).join(' ') || '?') : '○ nothing'}`;
+    case 'src': {
+      const n = nodeInfo(e.id);
+      const mark = { s: '§', e: '→', x: '✓' }[e.op];
+      return n ? `${mark} ${snippet(n)}` : `${mark} ${e.id}`;
+    }
+    case 'queue': return `${e.queue} ${e.op} ${names.get(`${e.queue}:${e.id}`) ?? e.id}`;
+  }
+}
+
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]); }
+
+function nodeInfo(id) {
+  for (const src of sources) {
+    const row = src.nodes[id - src.base];
+    if (id >= src.base && row) {
+      const [kind, start, end, stmt] = row;
+      return { id, src, kind, start, end, stmt: kind === 's' || stmt < 0 ? id : stmt };
+    }
+  }
+  return null;
+}
+
+function snippet(n) {
+  const t = n.src.text.slice(n.start, n.end).replace(/\s+/g, ' ').trim();
+  return t.length > 48 ? t.slice(0, 45) + '…' : t;
+}
+
+function shortFile(f) { return f.replace(/^file:\/\//, '').split('/').pop(); }
+
+function lineOf(src, offset) {
+  let lo = 0, hi = src.lineStarts.length - 1;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (src.lineStarts[mid] <= offset) lo = mid; else hi = mid - 1; }
+  return lo + 1;
+}
+
+function renderSource(e, state) {
+  if (!sources.length) { $('sourceBox').classList.add('hidden'); return; }
+  $('sourceBox').classList.remove('hidden');
+  // A pause or resume shows the await it happened at.
+  const awaitId = e.kind === 'act' && e.at !== undefined ? awaitNodeId(acts.get(e.id), e.at) : null;
+  const live = e.kind === 'src' || awaitId !== null;
+  const cur = nodeInfo(e.kind === 'src' ? e.id : awaitId ?? state.src.last);
+  const src = pinnedFile ?? cur?.src ?? sources[0];
+
+  $('tabs').innerHTML = sources.length > 1 ? sources.map((s, i) =>
+    `<button data-f="${i}" class="${s === src ? 'on' : ''}">${esc(shortFile(s.file))}</button>`).join('') : '';
+
+  const ranges = [];
+  if (cur && cur.src === src) {
+    const stmt = nodeInfo(cur.stmt);
+    if (stmt) ranges.push([stmt.start, stmt.end, 'hl-stmt']);
+    for (const id of state.src.stack) {
+      const n = nodeInfo(id);
+      if (n && n.src === src && n.id !== cur.id && n.start <= cur.start && n.end >= cur.end)
+        ranges.push([n.start, n.end, 'hl-stack']);
+    }
+    if (cur.kind === 'e') ranges.push([cur.start, cur.end, live && e.op === 'x' ? 'hl-done' : 'hl-cur']);
+  }
+
+  const cuts = new Set([0, src.text.length]);
+  for (const [a, b] of ranges) { cuts.add(a); cuts.add(b); }
+  const points = [...cuts].sort((a, b) => a - b);
+  // Syntax-colours src.text[a, b), clipping tokens that cross the edges of
+  // a highlight segment. Segments arrive in order, so `ti` only moves forward.
+  const toks = src.tokens;
+  let ti = 0;
+  const paint = (a, b) => {
+    let out = '', pos = a;
+    while (ti < toks.length && toks[ti][1] <= a) ti++;
+    for (let k = ti; k < toks.length && toks[k][0] < b; k++) {
+      const [ts, te, tc] = toks[k];
+      const s2 = Math.max(ts, a), e2 = Math.min(te, b);
+      if (s2 > pos) out += esc(src.text.slice(pos, s2));
+      out += `<span class="t-${tc}">${esc(src.text.slice(s2, e2))}</span>`;
+      pos = e2;
+    }
+    if (pos < b) out += esc(src.text.slice(pos, b));
+    return out;
+  };
+
+  let html = '';
+  let anchored = false;
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i], b = points[i + 1];
+    const cls = [...new Set(ranges.filter(([s, t]) => s <= a && t >= b).map((r) => r[2]))];
+    const text = paint(a, b);
+    if (!cls.length) { html += text; continue; }
+    const anchor = !anchored && (cls.includes('hl-cur') || cls.includes('hl-done') || (cur?.kind === 's' && cls.includes('hl-stmt')));
+    if (anchor) anchored = true;
+    html += `<span class="${cls.join(' ')}"${anchor ? ' id="anchor"' : ''}>${text}</span>`;
+  }
+  const code = $('code');
+  code.innerHTML = html;
+  code.classList.toggle('dim', !live);
+
+  const curLine = cur && cur.src === src ? lineOf(src, cur.start) : -1;
+  $('gutter').innerHTML = src.lineStarts.map((_, i) =>
+    `<span class="${i + 1 === curLine ? 'on' : ''}">${i + 1}</span>`).join('\n');
+  $('srcNote').textContent = live ? '' : cur ? 'Last code that ran (dimmed while showing a loop event).' : '';
+  if (awaitId !== null) $('srcNote').textContent = e.op === 'await' ? 'Paused at this await.' : 'Resuming after this await.';
+
+  const anchor = code.querySelector?.('#anchor');
+  if (anchor) {
+    const wrap = $('codeWrap');
+    const top = anchor.offsetTop - wrap.clientHeight / 2;
+    if (anchor.offsetTop < wrap.scrollTop + 20 || anchor.offsetTop > wrap.scrollTop + wrap.clientHeight - 40)
+      wrap.scrollTop = Math.max(0, top);
+  }
+}
+
+
+// ---- Explanations -------------------------------------------------------
+// Everything below turns raw events into "why" text. It is computed from the
+// trace alone, so it also works on traces recorded earlier.
+
+const BLOCK_MS = 20;  // a callback this long is flagged as blocking the loop
+// The main script also pays for module loading and tracing setup, so short
+// scripts measure 30-40 ms even when they do nothing slow.
+const MAIN_BLOCK_MS = 50;
+const LATE_MS = 5;    // a timer this late gets a lateness note
+
+const PHASE_WHY = {
+  timers: 'runs callbacks of <code>setTimeout</code>/<code>setInterval</code> timers whose delay has passed.',
+  pending: 'runs I/O callbacks libuv deferred from the previous iteration (for example some TCP errors). Rarely used.',
+  idle: 'internal libuv housekeeping. No JavaScript runs here.',
+  prepare: 'internal: runs right before poll. Node uses it to track idle time. No JavaScript runs here.',
+  check: 'runs <code>setImmediate</code> callbacks. It comes right after poll, so an immediate queued from an I/O callback always runs before any timer.',
+  close: 'runs <code>\'close\'</code> callbacks, such as after <code>socket.destroy()</code>.',
+};
+
+const PROVIDERS = {
+  FSREQCALLBACK: 'an <code>fs</code> operation, done on libuv\'s thread pool (4 threads by default)',
+  FSREQPROMISE: 'an <code>fs/promises</code> operation, done on libuv\'s thread pool',
+  GETADDRINFOREQWRAP: 'a DNS lookup (<code>dns.lookup</code>), done on libuv\'s thread pool',
+  TCPWRAP: 'a TCP socket or server', TCPCONNECTWRAP: 'a TCP connection being opened',
+  PIPEWRAP: 'a pipe (for example stdout/stdin to another process)', TTYWRAP: 'the terminal',
+  WRITEWRAP: 'a stream write finishing', SHUTDOWNWRAP: 'a stream shutdown',
+  PROCESSWRAP: 'a child process', UDPWRAP: 'a UDP socket', ZLIB: 'zlib (de)compression on the thread pool',
+  SIGNALWRAP: 'an OS signal', STATWATCHER: 'a file watcher (fs.watchFile)', FSEVENTWRAP: 'a file watcher (fs.watch)',
+};
+
+const STARVE_JOBS = 100; // chained nextTicks/microtasks flagged as starving the loop
+
+// Short "what this phase is for" cards for the phase list.
+const PHASE_CARD = {
+  'main script': 'Your module\'s top-level code. When it returns, Node drains nextTicks and microtasks, then starts the loop.',
+  timers: 'Runs expired <code>setTimeout</code>/<code>setInterval</code> callbacks, one timer list (one per delay) at a time.',
+  pending: 'Runs I/O callbacks libuv deferred from the previous iteration. Rarely used.',
+  idle: 'libuv housekeeping. No JavaScript runs here.',
+  prepare: 'Runs right before poll. Node uses it to track idle time. No JavaScript runs here.',
+  poll: 'Waits for I/O and runs I/O callbacks. How long it may sleep depends on timers and immediates.',
+  check: 'Runs <code>setImmediate</code> callbacks queued before the phase started.',
+  close: 'Runs <code>\'close\'</code> callbacks, such as after <code>socket.destroy()</code>.',
+  beforeExit: 'The loop ran out of work. Work scheduled by a <code>\'beforeExit\'</code> listener starts it again.',
+};
+
+// Pages checked to exist; API anchors match the headings in doc/api.
+const DOCS = {
+  loop: ['Event loop guide', 'https://nodejs.org/en/learn/asynchronous-work/event-loop-timers-and-nexttick'],
+  libuv: ['libuv I/O loop', 'https://docs.libuv.org/en/v1.x/design.html#the-i-o-loop'],
+  nextTick: ['process.nextTick()', 'https://nodejs.org/api/process.html#processnexttickcallback-args'],
+  nextTickGuide: ['Understanding process.nextTick()', 'https://nodejs.org/en/learn/asynchronous-work/understanding-processnexttick'],
+  immediate: ['setImmediate()', 'https://nodejs.org/api/timers.html#setimmediatecallback-args'],
+  immediateGuide: ['Understanding setImmediate()', 'https://nodejs.org/en/learn/asynchronous-work/understanding-setimmediate'],
+  setTimeout: ['setTimeout()', 'https://nodejs.org/api/timers.html#settimeoutcallback-delay-args'],
+  setInterval: ['setInterval()', 'https://nodejs.org/api/timers.html#setintervalcallback-delay-args'],
+  unref: ['timeout.unref()', 'https://nodejs.org/api/timers.html#timeoutunref'],
+  queueMicrotask: ['queueMicrotask()', 'https://nodejs.org/api/globals.html#queuemicrotaskcallback'],
+  tickVsMicrotask: ['queueMicrotask() vs. process.nextTick()', 'https://nodejs.org/api/process.html#when-to-use-queuemicrotask-vs-processnexttick'],
+  whyNextTick: ['Why use process.nextTick()?', 'https://nodejs.org/en/learn/asynchronous-work/event-loop-timers-and-nexttick#why-use-processnexttick'],
+  mdnThen: ['MDN: Promise.prototype.then()', 'https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/then'],
+  mdnAwait: ['MDN: await', 'https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/await'],
+  mdnMicrotask: ['MDN: microtasks', 'https://developer.mozilla.org/en-US/docs/Web/API/HTML_DOM_API/Microtask_guide'],
+  closePhase: ['Close callbacks phase', 'https://nodejs.org/en/learn/asynchronous-work/event-loop-timers-and-nexttick#close-callbacks'],
+  pollPhase: ['Poll phase', 'https://nodejs.org/en/learn/asynchronous-work/event-loop-timers-and-nexttick#poll'],
+  socketDestroy: ['socket.destroy()', 'https://nodejs.org/api/net.html#socketdestroyerror'],
+  esmVsCjs: ['ES modules', 'https://nodejs.org/api/esm.html'],
+  blocking: ['Don\'t block the event loop', 'https://nodejs.org/en/learn/asynchronous-work/dont-block-the-event-loop'],
+  beforeExit: ['\'beforeExit\'', 'https://nodejs.org/api/process.html#event-beforeexit'],
+  resources: ['process.getActiveResourcesInfo()', 'https://nodejs.org/api/process.html#processgetactiveresourcesinfo'],
+  unhandled: ['\'unhandledRejection\'', 'https://nodejs.org/api/process.html#event-unhandledrejection'],
+  rejectionHandled: ['\'rejectionHandled\'', 'https://nodejs.org/api/process.html#event-rejectionhandled'],
+  rejectionsFlag: ['--unhandled-rejections', 'https://nodejs.org/api/cli.html#--unhandled-rejectionsmode'],
+};
+
+function docs(...keys) {
+  return `<span class="docs">Docs: ${keys.map((k) =>
+    `<a href="${DOCS[k][1]}" target="_blank" rel="noopener">${esc(DOCS[k][0])}</a>`).join(' · ')}</span>`;
+}
+
+// Resource names as process.getActiveResourcesInfo() reports them.
+const RESOURCES = {
+  Timeout: ['pending timer', 'pending timers'],
+  Immediate: ['pending <code>setImmediate</code> callback', 'pending <code>setImmediate</code> callbacks'],
+  TCPServerWrap: ['TCP server', 'TCP servers'],
+  TCPSocketWrap: ['TCP socket', 'TCP sockets'],
+  TCPConnectWrap: ['TCP connection being opened', 'TCP connections being opened'],
+  PipeServerWrap: ['pipe server', 'pipe servers'],
+  PipeWrap: ['pipe', 'pipes'],
+  PipeConnectWrap: ['pipe connection being opened', 'pipe connections being opened'],
+  TTYWrap: ['terminal stream', 'terminal streams'],
+  ProcessWrap: ['child process', 'child processes'],
+  SignalWrap: ['signal listener', 'signal listeners'],
+  UDPWrap: ['UDP socket', 'UDP sockets'],
+  FSReqCallback: ['fs operation in progress', 'fs operations in progress'],
+  FSReqPromise: ['fs/promises operation in progress', 'fs/promises operations in progress'],
+  FSEventWrap: ['fs.watch() watcher', 'fs.watch() watchers'],
+  StatWatcher: ['fs.watchFile() watcher', 'fs.watchFile() watchers'],
+  GetAddrInfoReqWrap: ['DNS lookup in progress', 'DNS lookups in progress'],
+  GetNameInfoReqWrap: ['reverse DNS lookup in progress', 'reverse DNS lookups in progress'],
+  WriteWrap: ['stream write in progress', 'stream writes in progress'],
+  ShutdownWrap: ['stream shutdown in progress', 'stream shutdowns in progress'],
+  MessagePort: ['MessagePort', 'MessagePorts'],
+  Worker: ['worker thread', 'worker threads'],
+};
+
+function describeResources(resources) {
+  return resources.map(({ type, count }) => {
+    const [one, many] = RESOURCES[type] ?? [`<code>${esc(type)}</code>`, `<code>${esc(type)}</code>`];
+    return count > 1 ? `${count} ${many}` : `a ${one}`.replace(/^a ([aeiou])/i, 'an $1');
+  }).join(', ');
+}
+
+function clampWhy(e) {
+  const r = e.requested;
+  const n = typeof r === 'number' ? r : r === 'undefined' ? 0 : Number(r);
+  const asked = typeof r === 'number' ? `${r} ms` : r === 'undefined' ? 'no delay' : `<code>${esc(r)}</code>`;
+  let rule;
+  if (Number.isNaN(n)) rule = 'The delay is not a number, so Node uses 1 ms (and prints a TimeoutNaNWarning once).';
+  else if (n > 2147483647) rule = 'Delays above 2147483647 ms (about 24.8 days) do not fit in 32 bits, so Node uses 1 ms and prints a TimeoutOverflowWarning.';
+  else if (n < 0) rule = 'Negative delays become 1 ms (with a TimeoutNegativeWarning, once).';
+  else if (n < 1) rule = 'Delays below 1 ms, 0 included, become 1 ms.';
+  else rule = 'Timers count whole milliseconds, so Node drops the fraction.';
+  if (typeof r === 'string' && r !== 'undefined' && !Number.isNaN(n)) rule = `Node converts it to a number. ${n === e.delay ? '' : rule}`;
+  return `You asked for ${asked}; Node uses ${e.delay} ms. ${rule}`;
+}
+
+function unhandledWhy(e) {
+  const heard = e.listeners > 0;
+  switch (e.mode) {
+    case 'strict':
+      return 'With <code>--unhandled-rejections=strict</code>, Node first raises the reason as an uncaught exception, then emits <code>\'unhandledRejection\'</code>.';
+    case 'warn':
+      return 'Node emits <code>\'unhandledRejection\'</code> and, with <code>--unhandled-rejections=warn</code>, always prints a warning. The process keeps running.';
+    case 'warn-with-error-code':
+      return heard ? 'Node emits <code>\'unhandledRejection\'</code> and your listener receives it. The process keeps running.'
+        : 'Nobody listens for <code>\'unhandledRejection\'</code>, so Node prints a warning and sets the exit code to 1. The process keeps running for now.';
+    case 'none':
+      return 'Node emits <code>\'unhandledRejection\'</code> without any warning (<code>--unhandled-rejections=none</code>).';
+    default:
+      return heard ? 'Node emits <code>\'unhandledRejection\'</code> and your listener receives it, so the process keeps running.'
+        : 'Node emits <code>\'unhandledRejection\'</code>, but nothing listens. In the default mode (<code>--unhandled-rejections=throw</code>) ' +
+          'Node then raises the reason as an uncaught exception: unless an <code>\'uncaughtException\'</code> handler catches it, the process exits with code 1.';
+  }
+}
+
+// `timed` marks notes built on measured durations, which tracing inflates.
+// `html` is what the note says up front; `more`, if any, is the detail that
+// waits under "Why now?" so a warning stays one or two sentences.
+function addNote(idx, level, html, timed = false, more = '') {
+  if (!notes.has(idx)) notes.set(idx, []);
+  notes.get(idx).push({ level, html, timed, more });
+}
+
+const TIMING_NOTE = '⏱ Measured with tracing on. Every traced step costs time, so durations and lateness here ' +
+  'are longer than in an untraced run, and close races (such as <code>setTimeout(fn, 0)</code> vs ' +
+  '<code>setImmediate</code>) can come out differently.';
+
+// Names a queued callback after its own code when it has no name of its
+// own, and notes the line it starts on, so two copies of the same code
+// differ in the queues.
+// `e.fn` is [file, offset in the instrumented source] from V8; each source's
+// funcs rows are [start, end, instrumented start, instrumented end].
+const MAX_CODE_LABEL = 40;
+function nameCallback(e) {
+  const src = e.fn && sources.find((x) => x.file === e.fn[0]);
+  // A builtin (such as a promise's resolve) has no source; name it after
+  // the user line that queued it.
+  if (!src && (!e.name || e.name === '<anonymous>') && !e.internal) {
+    const line = /:(\d+):\d+$/.exec(e.site ?? '')?.[1];
+    if (line) e.name = `from line ${line}`;
+  }
+  if (!src) return;
+  const pos = e.fn[1];
+  let best = null;
+  for (const f of src.funcs)
+    if (f[2] <= pos && pos < f[3] && (!best || f[3] - f[2] < best[3] - best[2])) best = f;
+  if (!best) return;
+  e.code = src.text.slice(best[0], best[1]);
+  e.line = lineOf(src, best[0]);
+  if (e.name && e.name !== '<anonymous>') return;
+  e.name = codeLabel(e.code);
+}
+
+function codeLabel(code) {
+  const flat = code.replace(/\s+/g, ' ');
+  return flat.length > MAX_CODE_LABEL ? flat.slice(0, MAX_CODE_LABEL - 1) + '…' : flat;
+}
+
+// A function's own name from its source (`function onRead(`), else its code.
+function funcLabel(code) {
+  return /^(?:async\s+)?function\s*\*?\s*([\w$]+)/.exec(code)?.[1] ?? codeLabel(code);
+}
+
+// Innermost function (original [start, end]) around an original offset.
+function funcAround(src, offset) {
+  let best = null;
+  for (const f of src.funcs)
+    if (f[0] <= offset && offset < f[1] && (!best || f[1] - f[0] < best[1] - best[0])) best = f;
+  return best;
+}
+
+// I/O callbacks carry only libuv's provider (FSREQCALLBACK). Name each after
+// the user function whose first statement runs inside it, if any.
+function nameIoCallbacks() {
+  const open = [];
+  for (const e of all) {
+    if (e.kind === 'io') {
+      if (e.begin) open.push(e); else open.pop();
+    } else if (e.kind === 'src' && open.length && open.at(-1).label === undefined) {
+      const io = open.at(-1);
+      const src = sources.find((x) => e.id >= x.base && e.id < x.base + x.nodes.length);
+      const f = src && funcAround(src, src.nodes[e.id - src.base][1]);
+      io.label = f ? funcLabel(src.text.slice(f[0], f[1])) : null;
+    }
+  }
+}
+
+// Promise hooks don't expose a reaction's handler. When exactly one
+// function starts on the line that called .then/.catch/.finally, that is
+// taken to be the handler; otherwise the "reaction @ line N" name stays.
+// The method that registered a reaction, read from the line that called it
+// when that line has exactly one.
+function thenCall(site) {
+  const at = codeAtSite(site);
+  const text = at ? at.src.text.slice(at.src.lineStarts[at.line - 1], at.src.lineStarts[at.line] ?? at.src.text.length) : '';
+  const found = new Set([...text.matchAll(/\.(then|catch|finally)\s*\(/g)].map((m) => m[1]));
+  return `<code>.${found.size === 1 ? [...found][0] : 'then'}()</code>`;
+}
+
+// A reaction the user's own `.then`/`.catch`/`.finally` queued, whose cause
+// (the call itself, or the promise settling) the trace recorded.
+const isUserReaction = (e) => e.queue === 'microtask' && e.job === 'promise reaction' && !e.internal && e.cause &&
+  !awaitAt(e.site);
+
+function nameReaction(e) {
+  const at = codeAtSite(e.site);
+  if (!at) return;
+  const fs = at.src.funcs.filter((f) => lineOf(at.src, f[0]) === at.line);
+  if (fs.length !== 1) return;
+  e.code = at.src.text.slice(fs[0][0], fs[0][1]);
+  e.line = at.line;
+  e.name = funcLabel(e.code);
+}
+
+function ioName(e) {
+  return e.label ? `I/O callback ${e.label}` : `I/O callback (${e.provider})`;
+}
+
+function codeAtSite(site) {
+  // "fn /path/file.js:line:col" -> { src, line } for an instrumented file.
+  const m = /^\S+ (.*):(\d+):\d+$/.exec(site ?? '');
+  if (!m) return null;
+  const src = sources.find((x) => x.file === m[1]);
+  return src ? { src, line: +m[2] } : null;
+}
+
+// The `await` expression on the line that created a promise reaction, if any.
+function awaitAt(site) {
+  const at = codeAtSite(site);
+  if (!at) return null;
+  for (let i = 0; i < at.src.nodes.length; i++) {
+    const [kind, start, end] = at.src.nodes[i];
+    if (kind !== 'e' || lineOf(at.src, start) !== at.line) continue;
+    const text = at.src.text.slice(start, end);
+    if (/^await\b/.test(text)) return text.replace(/\s+/g, ' ');
+  }
+  return null;
+}
+
+function stepLink(idx, label) {
+  return `<a href="#" data-jump-idx="${idx}">${label}</a>`;
+}
+
+// ---- Async function calls -------------------------------------------------
+// The tracer numbers every call of an async function (an activation) and
+// reports when it starts, pauses at an await, resumes and finishes. Each
+// pause is a point where other code can run, including another call of the
+// same function.
+
+function asyncFn(id) {
+  for (const src of sources) {
+    const row = src.asyncFns.find((r) => r[0] === id);
+    if (row) return { src, start: row[1], end: row[2], name: row[3] ?? funcLabel(src.text.slice(row[1], row[2])) };
+  }
+  return null;
+}
+
+// The `await` expression at an original offset, and its line.
+function awaitLabel(a, at) {
+  const src = a?.src;
+  if (!src || at === undefined) return { text: 'await', line: '?' };
+  const row = src.nodes.find((n) => n[0] === 'e' && n[1] === at && /^await\b/.test(src.text.slice(n[1], n[2])));
+  const end = row ? row[2] : src.text.indexOf('\n', at) >>> 0;
+  const text = src.text.slice(at, end).replace(/\s+/g, ' ').trim();
+  return { text: text.length > 48 ? text.slice(0, 45) + '…' : text, line: lineOf(src, at) };
+}
+
+// Probe id of the `await` expression at an original offset, if it has one.
+function awaitNodeId(a, at) {
+  const src = a?.src;
+  const k = src ? src.nodes.findIndex((n) => n[0] === 'e' && n[1] === at) : -1;
+  return k < 0 ? null : src.base + k;
+}
+
+// Where a pause ends: its resume, or, when the awaited promise rejected
+// (which the tracer cannot see), the call's next await or its end.
+const pauseEnd = (p) => p.resumeIdx ?? p.endIdx;
+
+function buildActivations() {
+  acts = new Map();
+  const counts = new Map();
+  all.forEach((e, idx) => {
+    if (e.kind !== 'act') return;
+    if (e.op === 'enter') {
+      const fn = asyncFn(e.fn);
+      const n = (counts.get(e.fn) ?? 0) + 1;
+      counts.set(e.fn, n);
+      acts.set(e.id, { id: e.id, fn: e.fn, src: fn?.src, name: `${fn?.name ?? 'async function'} #${n}`,
+        enterIdx: idx, exitIdx: null, pauses: [] });
+      return;
+    }
+    const a = acts.get(e.id);
+    if (!a) return;
+    const open = a.pauses.at(-1);
+    if (e.op === 'resume') {
+      if (open && pauseEnd(open) === undefined) open.resumeIdx = idx;
+      return;
+    }
+    if (open && pauseEnd(open) === undefined) open.endIdx = idx;
+    if (e.op === 'await') a.pauses.push({ at: e.at, awaitIdx: idx, resumeIdx: undefined, endIdx: undefined });
+    else if (e.op === 'exit') a.exitIdx = idx;
+  });
+}
+
+// The pause of `a` open at event `idx`, if any.
+function pauseAt(a, idx) {
+  return a.pauses.find((p) => p.awaitIdx <= idx && (pauseEnd(p) === undefined || idx < pauseEnd(p)));
+}
+
+// What ran while a call was paused: other calls, and callbacks Node ran.
+// The microtask that resumes the call itself is left out.
+function ranWhilePaused(a, p) {
+  const end = pauseEnd(p) ?? all.length;
+  const calls = new Map();
+  const callbacks = [];
+  const resumers = new Set();
+  const openRuns = [];
+  let lines = 0;
+  for (let j = p.awaitIdx + 1; j < end; j++) {
+    const e = all[j];
+    if (e.kind === 'act' && e.id !== a.id && (e.op === 'enter' || e.op === 'resume')) {
+      const other = acts.get(e.id);
+      if (other && !calls.has(other.id)) calls.set(other.id, { a: other, started: e.op === 'enter', idx: j });
+      const run = openRuns.at(-1);
+      if (e.op === 'resume' && run) resumers.add(run.key);
+    } else if (e.kind === 'queue' && (e.op === 'run' || e.op === 'done')) {
+      const key = `${e.queue}:${e.id}`;
+      if (e.op === 'run') openRuns.push({ key, idx: j });
+      else { const at = openRuns.findLastIndex((r) => r.key === key); if (at >= 0) openRuns.splice(at, 1); }
+      if (e.op === 'run' && !internalIds.has(key)) callbacks.push({ key, idx: j });
+    } else if (e.kind === 'io' && e.begin && userIo.has(e)) {
+      callbacks.push({ key: null, idx: j, name: ioName(e) });
+    } else if (e.kind === 'console') {
+      lines++;
+    }
+  }
+  // Still open at the end: the job that resumes this call.
+  for (const r of openRuns) resumers.add(r.key);
+  const others = callbacks.filter((c) => !resumers.has(c.key)).map((c) => ({
+    idx: c.idx, name: c.name ?? `${QUEUE_NAMES[all[c.idx].queue] ?? all[c.idx].queue} ${nameOf(c.key, String(all[c.idx].id))}` }));
+  return { calls: [...calls.values()], callbacks: others, lines };
+}
+
+// Notes on each pause, and a gotcha when calls of one function overlap.
+function analyzeActivations(gotcha) {
+  for (const a of acts.values()) {
+    const fname = a.name.replace(/ #\d+$/, '');
+    const overlapping = [...acts.values()].filter((b) => b.fn === a.fn && b.id !== a.id && b.enterIdx < a.enterIdx &&
+      (b.exitIdx === null || b.exitIdx > a.enterIdx));
+    for (const b of overlapping) {
+      const p = pauseAt(b, a.enterIdx);
+      const where = p ? ` while <b>${esc(b.name)}</b> was paused at <code>${esc(awaitLabel(b, p.at).text)}</code> (line ${awaitLabel(b, p.at).line})`
+        : ` before <b>${esc(b.name)}</b> finished`;
+      const lead = `<b>${esc(a.name)}</b> started${where}. Every <code>await</code> lets other code run, ` +
+        `including another call of <code>${esc(fname)}</code>.`;
+      const more = 'If the calls share state (a variable, a connection, a single result slot), one call can change it ' +
+        'between the other\'s awaits. To run them one at a time, chain each call on the previous one\'s promise, ' +
+        'or use a lock.' + docs('mdnAwait');
+      addNote(a.enterIdx, 'warn', lead, false, more);
+      gotcha(`overlap:${a.fn}`, `Calls to ${fname} overlapped`, `${lead} ${more}`, a.enterIdx);
+    }
+    for (const p of a.pauses) {
+      const end = pauseEnd(p);
+      if (end === undefined) continue;
+      const aw = awaitLabel(a, p.at);
+      const ran = ranWhilePaused(a, p);
+      const items = [
+        ...ran.calls.map((c) => `<b>${esc(c.a.name)}</b> ${c.started ? 'started' : 'resumed'} (${stepLink(c.idx, 'see')})`),
+        ...ran.callbacks.map((c) => `<code>${esc(c.name)}</code> (${stepLink(c.idx, 'see')})`),
+      ];
+      const shown = items.length > 8 ? [...items.slice(0, 8), `${items.length - 8} more`] : items;
+      const since = `While <b>${esc(a.name)}</b> was paused at <code>${esc(aw.text)}</code> (${stepLink(p.awaitIdx, 'since here')})`;
+      const how = p.resumeIdx === undefined ? ' The awaited promise rejected, so it continues by throwing.' : '';
+      if (!items.length && !ran.lines) {
+        addNote(end, 'info', `${since}, nothing else ran.${how}`);
+        continue;
+      }
+      const same = ran.calls.filter((c) => c.a.fn === a.fn);
+      const html = `${since}, other code ran: ${shown.join(', ')}` +
+        (ran.lines ? `, and ${ran.lines} line${ran.lines > 1 ? 's' : ''} of output` : '') + '.' + how;
+      if (!same.length) { addNote(end, 'info', html); continue; }
+      addNote(end, 'warn', `${same.map((c) => `<b>${esc(c.a.name)}</b>`).join(' and ')} ran while <b>${esc(a.name)}</b> ` +
+        'was paused, so anything the calls share may have changed since this call last looked at it.', false, html);
+    }
+  }
+}
+
+// One pass over the trace, replaying state, to record the context of every
+// event and detect gotchas.
+function analyze() {
+  info = []; notes = new Map(); gotchas = []; enqueueAt = new Map();
+  const state = emptyState();
+  const runAt = new Map();
+  let lastDone = null;
+  let lastMacro = null;   // last timer/immediate that finished in this phase
+  let lastBlock = null;
+  let firstUserTs = null;
+  let mainChecked = false;
+  const raceTimers = [], raceImmediates = [];
+  const once = new Set(); // gotcha kinds already reported
+  const blockers = new Map(); // callback name -> its blocking gotcha
+  const visibleKey = (k) => !internalIds.has(k);
+  userIo = new Set();
+  shownAlive = new Set();
+  let lastAliveSig = null;
+  const ioStack = [];
+  let burst = null;       // nextTick/microtask callbacks running back to back
+  let phaseTimers = [];   // timers run so far in this timers phase
+  let timersPhaseTs = null;
+  const intervals = new Map(); // key -> { firstDue, runs, maxDrift, idx }
+  const thenAt = new Map();    // "microtask:id" -> index of its `then` event
+
+  const gotcha = (kind, title, html, idx) => {
+    if (once.has(kind)) return;
+    once.add(kind);
+    gotchas.push({ title, html, idx });
+  };
+
+  // A long chain of nextTicks or microtasks, each queued by the one before,
+  // keeps Node from returning to the loop.
+  const endBurst = (idx) => {
+    const b = burst;
+    burst = null;
+    if (!b || b.chained < STARVE_JOBS) return;
+    const ms = (b.lastTs - b.firstTs) / 1000;
+    const what = b.queues.size > 1 ? 'nextTick and microtask' : b.queues.has('nextTick') ? 'nextTick' : 'microtask';
+    const lead = `${b.count} ${what} callbacks ran back to back (${ms.toFixed(1)} ms), ${b.chained} of them queued by ` +
+      'the one before. Timers, I/O and immediates wait until the chain ends.';
+    const more = 'Node empties these queues completely before it goes back to the event loop, so a callback that keeps ' +
+      'queueing more of them starves everything else. To let the loop breathe between chunks of work, schedule the ' +
+      'next chunk with <code>setImmediate</code>.' + docs('nextTickGuide', 'immediateGuide');
+    const html = `${lead} ${more}`;
+    addNote(b.firstIdx, 'warn', lead, true, more);
+    addNote(idx, 'warn', `The loop gets control back only now, after the chain of ${b.count} ${what} callbacks (${stepLink(b.firstIdx, 'see')}).`);
+    gotcha('starve', `${b.count} chained ${what} callbacks starved the loop`, html, b.firstIdx);
+    lastBlock = { name: `the chain of ${b.count} ${what} callbacks`, plain: true, ms, ts: b.lastTs, idx: b.firstIdx };
+  };
+
+  for (let idx = 0; idx < all.length; idx++) {
+    const e = all[idx];
+    const phase = state.phase === 'between phases' ? state.prevPhase : state.phase;
+    const inIo = state.running.some((r) => r.queue === 'io');
+
+    if (firstUserTs === null && (e.kind === 'src' || (e.kind === 'queue' && !e.internal && isEnqueue(e))))
+      firstUserTs = e.ts;
+    if (!mainChecked && e.kind === 'phase' && e.begin && LOOP_PHASES.has(e.phase) && firstUserTs !== null) {
+      mainChecked = true;
+      const ms = (e.ts - firstUserTs) / 1000;
+      if (ms >= MAIN_BLOCK_MS) {
+        const html = `The main script (plus its nextTicks and microtasks) ran for ${ms.toFixed(1)} ms before the event loop could start. ` +
+          'Nothing asynchronous can run until synchronous code finishes.' + docs('blocking');
+        addNote(idx, 'warn', html, true);
+        gotchas.push({ title: `Main script blocked for ${ms.toFixed(0)} ms`, html, idx });
+      }
+    }
+
+    if ((e.kind === 'phase' && e.begin) || e.kind === 'alive' || (e.kind === 'io' && e.begin) ||
+        (e.kind === 'queue' && e.op === 'run' && (e.queue === 'timers' || e.queue === 'immediate')))
+      endBurst(idx);
+
+    if (e.kind === 'phase' && e.begin) { lastDone = null; lastMacro = null; }
+    // In an ES module the top-level code is itself a microtask, which flips
+    // the usual nextTick-before-promises order for work it queues.
+    if (e.kind === 'queue' && e.op === 'enqueue' && e.queue === 'nextTick' && !e.internal &&
+        phase === 'main script' && / file:\/\//.test(e.site ?? '') && !once.has('esmTick')) {
+      const html = 'This file is an ES module (it uses <code>import</code>/<code>export</code> or top-level ' +
+        '<code>await</code>). Node runs an ES module\'s top-level code as part of the microtask queue, so promise ' +
+        'jobs and <code>queueMicrotask()</code> callbacks it queues run <b>before</b> this nextTick. In a CommonJS ' +
+        'file the order is the other way round.' + docs('tickVsMicrotask', 'esmVsCjs');
+      addNote(idx, 'info', html);
+      gotcha('esmTick', 'In an ES module, top-level promise jobs beat nextTick', html, idx);
+    }
+    if (e.kind === 'phase' && e.begin && e.phase === 'timers') { phaseTimers = []; timersPhaseTs = e.ts; }
+    if (e.kind === 'alive') {
+      const sig = `${e.alive} ${e.resources.map((r) => `${r.type}:${r.count}`).join()}`;
+      if (e.what === 'alive' && (sig !== lastAliveSig || !e.alive)) shownAlive.add(e);
+      lastAliveSig = sig;
+    }
+    if (e.kind === 'io' && e.begin) ioStack.push({ e, idx, user: false });
+    if (e.kind === 'console') {
+      const r = state.running.findLast((x) => x.queue === 'io' || visibleKey(`${x.queue}:${x.id}`));
+      info[idx] = { by: !r ? { queue: 'main' }
+        : { queue: r.queue, name: r.name, label: r.label, runIdx: r.queue === 'io' ? ioStack.at(-1)?.idx : runAt.get(`${r.queue}:${r.id}`) } };
+    }
+    if (e.kind === 'io' && !e.begin) {
+      const open = ioStack.pop();
+      if (open?.user) { userIo.add(open.e); userIo.add(e); }
+      lastDone = { queue: 'io', name: 'the I/O callback', idx };
+    }
+    // An I/O callback is worth showing when user code ran inside it.
+    if (ioStack.length && (e.kind === 'src' || e.kind === 'console' || (e.kind === 'queue' && !e.internal)))
+      for (const o of ioStack) o.user = true;
+
+    if (e.kind === 'queue' && (e.op === 'ref' || e.op === 'unref')) {
+      if (!enqueueAt.has(`${e.queue}:${e.id}`)) e.early = true;
+    } else if (e.kind === 'queue' && e.queue === 'rejection') {
+      analyzeRejection(e, idx);
+    } else if (e.kind === 'queue') {
+      const key = `${e.queue}:${e.id}`;
+      if (e.op === 'then') {
+        thenAt.set(key, idx);
+        if (!e.internal && e.job === 'promise reaction') {
+          e.isAwait = !!awaitAt(e.site);
+          if (!e.isAwait) {
+            nameReaction(e);
+            names.set(key, e.name);
+          }
+        }
+      } else if (e.op === 'enqueue') {
+        const prior = enqueueAt.get(key);
+        enqueueAt.set(key, idx);
+        const by = state.running.at(-1);
+        info[idx] = { phase, inIo, byName: by?.name ?? null, byQueue: by?.queue, thenIdx: thenAt.get(key) };
+        if (e.queue === 'timers' && visibleKey(key)) analyzeTimerEnqueue(e, idx, key, prior);
+        if (!e.internal && e.queue === 'timers' && e.delay <= 1 && phase === 'main script' && !inIo)
+          raceTimers.push(idx);
+        if (!e.internal && e.queue === 'immediate' && phase === 'main script' && !inIo)
+          raceImmediates.push(idx);
+        if (e.queue === 'microtask' && e.job === 'promise reaction' && !e.internal) {
+          const aw = awaitAt(e.site);
+          if (aw) {
+            info[idx].await = aw;
+            // This job resumes the paused function; name it after that.
+            const line = codeAtSite(e.site)?.line;
+            e.name = `resume after await${line ? ` @ line ${line}` : ''}`;
+            names.set(key, e.name);
+            addNote(idx, 'info', `<code>${esc(aw.length > 60 ? aw.slice(0, 57) + '…' : aw)}</code> pauses the code it is in ` +
+              '(an async function, or a module\'s top level). Everything after it continues in a microtask, ' +
+              'even when the awaited value is not a promise. That is why code after <code>await</code> never runs synchronously.');
+            if (/^await\s+(null|undefined|true|false|\d|['"`])/.test(aw)) {
+              gotcha('await', '`await` on a non-promise still yields',
+                `<code>${esc(aw)}</code> is not a promise, but the function still pauses for one microtask turn.`, idx);
+            }
+          } else {
+            nameReaction(e);
+            names.set(key, e.name);
+          }
+        }
+        if (e.queue === 'microtask' && e.job === 'thenable job' && !e.internal) {
+          const lead = 'The previous callback returned a promise (or another thenable), so code chained after it runs ' +
+            'about two microtask turns later than if it had returned a plain value.';
+          const more = 'Adopting its result is not free: V8 queues an extra job to call its <code>then</code>, and ' +
+            'another reaction once it settles.';
+          const html = `${lead} ${more}`;
+          addNote(idx, 'warn', lead, false, more);
+          gotcha('hop', 'Returning a promise from .then() adds microtask hops', html, idx);
+        }
+        if (e.queue === 'microtask' && e.job === 'adopt job' && !e.internal) {
+          addNote(idx, 'info', 'The thenable job called <code>then</code> on the promise it was given. When this job runs, ' +
+            'it settles the promise waiting on it, and only then are that promise\'s own reactions queued.');
+        }
+      } else if (e.op === 'run') {
+        runAt.set(key, idx);
+        const enq = enqueueAt.get(key);
+        if (enq === undefined && e.queue === 'microtask' && e.job === 'thenable job' && !e.internal) {
+          const lead = 'A promise was resolved with another promise, by <code>resolve(p)</code> or by returning a ' +
+            'promise from an async function, so its reactions run about two microtask turns later than with a plain value.';
+          const more = 'V8 queues this job to call the other promise\'s <code>then</code>, and that call queues ' +
+            'another job to settle the first promise. V8 reports no event when this job is queued, so it first shows up here.';
+          addNote(idx, 'warn', lead, false, more);
+          gotcha('resolveHop', 'Resolving with a promise adds microtask hops', `${lead} ${more}`, idx);
+        }
+        info[idx] = { phase, inIo, enqueueIdx: enq, prevDone: lastDone, prevMacro: lastMacro, pausedAt: pausedAwait(state),
+          resumes: info[enq]?.await, enqueuePhase: info[enq]?.phase,
+          enqueueInIo: info[enq]?.inIo };
+        if ((e.queue === 'nextTick' || e.queue === 'microtask') && visibleKey(key)) {
+          burst ??= { count: 0, chained: 0, firstIdx: idx, firstTs: e.ts, lastTs: e.ts, queues: new Set() };
+          burst.count++;
+          burst.queues.add(e.queue);
+          const byQueue = info[enq]?.byQueue;
+          if (byQueue === 'nextTick' || byQueue === 'microtask') burst.chained++;
+        }
+        if (e.queue === 'timers' && enq !== undefined && visibleKey(key)) analyzeTimerRun(e, idx, key, enq);
+      } else if (e.op === 'done') {
+        if (burst && (e.queue === 'nextTick' || e.queue === 'microtask')) burst.lastTs = e.ts;
+        const run = runAt.get(key);
+        const ms = run !== undefined ? (e.ts - all[run].ts) / 1000 : 0;
+        const ran = state.running.findLast((x) => x.queue === e.queue && x.id === e.id)?.name;
+        const name = ran && ran !== '<anonymous>' ? ran : nameOf(key, e.id);
+        if (visibleKey(key)) {
+          lastDone = { queue: e.queue, name, idx };
+          if (e.queue === 'timers' || e.queue === 'immediate') lastMacro = lastDone;
+        }
+        if (ms >= BLOCK_MS && visibleKey(key)) {
+          lastBlock = { name, ms, ts: e.ts, idx };
+          const html = `<code>${esc(name)}</code> ran for ${ms.toFixed(1)} ms of synchronous work. During that time nothing else ` +
+            'could run: no timers, no I/O callbacks, no other queued callbacks.' + docs('blocking');
+          addNote(idx, 'warn', html, true);
+          // One entry per callback, however often it blocked.
+          const seen = blockers.get(name);
+          if (!seen) {
+            const g = { title: `${name} blocked the event loop for ${ms.toFixed(0)} ms`, html, idx, times: 1, max: ms };
+            blockers.set(name, g);
+            gotchas.push(g);
+          } else {
+            seen.times++;
+            if (ms > seen.max) { seen.max = ms; seen.idx = idx; }
+            seen.title = `${name} blocked the event loop ${seen.times} times, up to ${seen.max.toFixed(0)} ms`;
+          }
+        }
+      }
+    }
+    // Name the job that resumes an async call after that call.
+    if (e.kind === 'act' && e.op === 'resume') {
+      const job = state.running.findLast((x) => x.queue === 'microtask');
+      const a = acts.get(e.id);
+      const enq = job && enqueueAt.get(`microtask:${job.id}`);
+      if (a && enq !== undefined) {
+        job.name = all[enq].name = `resume ${a.name} @ line ${awaitLabel(a, e.at).line}`;
+        names.set(`microtask:${job.id}`, job.name);
+      }
+    }
+    apply(state, e);
+  }
+  endBurst(all.length - 1);
+  analyzeActivations(gotcha);
+
+  for (const [key, iv] of intervals) {
+    if (iv.maxDrift >= LATE_MS)
+      gotchas.push({ title: `${nameOf(key, 'An interval')} drifted ${iv.maxDrift} ms behind its schedule`, idx: iv.idx });
+  }
+
+  if (raceTimers.length && raceImmediates.length) {
+    const lead = 'The order between <code>setTimeout(fn, 0)</code> and <code>setImmediate(fn)</code> scheduled from ' +
+      'the main module is <b>not guaranteed</b>.';
+    const more = 'The timer becomes due 1 ms after it was set. If the loop starts before that 1 ms has passed, the ' +
+      'timers phase finds nothing due and the check phase runs the immediate first; otherwise the timer wins. Inside ' +
+      'an I/O callback, <code>setImmediate</code> always runs first.' + docs('loop', 'immediateGuide');
+    const html = `${lead} ${more}`;
+    const raceIdxs = [...raceTimers, ...raceImmediates].sort((a, b) => a - b);
+    addNote(raceIdxs[0], 'warn', lead, false, more);
+    for (const idx of raceIdxs.slice(1))
+      addNote(idx, 'warn', `Part of a <code>setTimeout(0)</code> vs <code>setImmediate</code> race: their order can change between runs (${stepLink(raceIdxs[0], 'why')}).`);
+    const firstRun = [...raceTimers, ...raceImmediates]
+      .map((i) => runAt.get(`${all[i].queue}:${all[i].id}`)).filter((i) => i !== undefined).sort((a, b) => a - b)[0];
+    if (firstRun !== undefined)
+      addNote(firstRun, 'warn', `This ran first <b>this time</b>. Run it again and the order may flip (${stepLink(raceIdxs[0], 'why')}).`);
+    gotchas.push({ title: 'Race: setTimeout(0) vs setImmediate', html, idx: raceTimers[0] });
+  }
+
+  // Delay clamping, shared timer lists and interval drift.
+  function analyzeTimerEnqueue(e, idx, key, prior) {
+    if (prior !== undefined && e.repeat !== undefined) {
+      e.rearm = true;
+      const iv = intervals.get(key);
+      if (!iv) return;
+      iv.runs++;
+      const ideal = iv.firstDue + iv.runs * e.repeat;
+      const drift = e.due - ideal;
+      if (drift >= 2) {
+        addNote(idx, 'info', `<code>setInterval</code> re-arms the timer from when this run started (loop clock ${e.due - e.repeat} ms), ` +
+          `not from its original schedule. The next run is due at ${e.due} ms, ${drift} ms behind the schedule it started with ` +
+          `(${ideal} ms). Every slow run or late start adds to that drift.` + docs('setInterval'), true);
+      }
+      if (drift > iv.maxDrift) { iv.maxDrift = drift; iv.idx = idx; }
+      return;
+    }
+    if (e.repeat !== undefined && prior === undefined)
+      intervals.set(key, { firstDue: e.due, runs: 0, maxDrift: 0, idx });
+    if (e.requested !== undefined) {
+      addNote(idx, 'info', clampWhy(e) + docs('setTimeout'));
+      if (e.requested === 0 || e.requested === 'undefined') {
+        gotcha('clamp', 'setTimeout(fn, 0) really waits 1 ms',
+          '<code>setTimeout(fn, 0)</code> and <code>setTimeout(fn)</code> both become 1 ms timers.', idx);
+      }
+    }
+    const others = state.queues.timers.filter((x) => x.delay === e.delay && x.id !== e.id).length;
+    if (others) {
+      addNote(idx, 'info', `This timer joins the existing ${e.delay} ms timer list, behind ${others} other pending ` +
+        `timer${others > 1 ? 's' : ''}. Node keeps one list per delay, in the order timers were set, so timers with ` +
+        'the same delay always run in that order.');
+    }
+  }
+
+  // Exact lateness from Node's own loop clock, and timers that ran out of
+  // due order because Node finishes one timer list before the next.
+  function analyzeTimerRun(e, idx, key, enq) {
+    const queued = all[enq];
+    let late, html;
+    if (e.now !== undefined && e.due !== undefined) {
+      const clockLate = e.now - e.due;
+      const waited = timersPhaseTs !== null ? (e.ts - timersPhaseTs) / 1000 : 0;
+      late = clockLate + waited;
+      html = `This timer was due at ${e.due} ms on Node's loop clock. The timers phase started at ${e.now} ms, ` +
+        `so it was already ${clockLate} ms late` +
+        (waited >= 1 ? `, and then waited another ${waited.toFixed(1)} ms in this phase behind earlier callbacks` : '') + '. ';
+    } else if (queued.delay !== undefined) {
+      late = (e.ts - (queued.ts + queued.delay * 1000)) / 1000;
+      html = `This timer ran ${late.toFixed(1)} ms after it was due. `;
+    }
+    if (late >= LATE_MS) {
+      html += 'A timer delay is a minimum, not a guarantee: the timer can only run once the loop is free and reaches the timers phase.';
+      const dueTs = queued.ts + (queued.delay ?? 0) * 1000;
+      const blamed = lastBlock && lastBlock.ts > dueTs;
+      if (blamed) {
+        const who = lastBlock.plain ? esc(lastBlock.name) : `<code>${esc(lastBlock.name)}</code>`;
+        addNote(idx, 'warn', `This timer ran ${late.toFixed(1)} ms late, waiting for ${who}, which blocked the loop for ` +
+          `${lastBlock.ms.toFixed(1)} ms (${stepLink(lastBlock.idx, 'see')}).`, true, html + docs('setTimeout', 'blocking'));
+      } else addNote(idx, 'info', html + docs('setTimeout', 'blocking'), true);
+    }
+    if (e.due === undefined) return;
+    const name = nameOf(key, String(e.id));
+    const passed = phaseTimers.find((t) => t.due > e.due && t.delay !== queued.delay);
+    if (passed) {
+      const lead = `<code>${esc(name)}</code> was due at ${e.due} ms, before <code>${esc(passed.name)}</code> ` +
+        `(due at ${passed.due} ms), which already ran.`;
+      const more = 'Node keeps one list per delay and takes the lists in order of their earliest timer. It runs every ' +
+        'expired timer of one list before it moves to the next, so timers with different delays can run out of due ' +
+        'order.' + docs('setTimeout');
+      const why = `${lead} ${more}`;
+      addNote(idx, 'warn', lead, false, more);
+      gotcha('order', 'Timers ran out of due order', why, idx);
+    }
+    phaseTimers.push({ due: e.due, delay: queued.delay, name });
+  }
+
+  function analyzeRejection(e, idx) {
+    const key = `rejection:${e.id}`;
+    if (e.op === 'reject') enqueueAt.set(key, idx);
+    if (!visibleKey(key)) return;
+    if (e.op === 'reject') {
+      addNote(idx, 'info', 'Node does not call this rejection unhandled right away. It first waits for the callback it is running to return ' +
+        'and drains the nextTick and microtask queues. A <code>.catch()</code>, a rejection handler in <code>.then()</code>, ' +
+        'or an <code>await</code> attached before then counts as handled.' + docs('unhandled'));
+    } else if (e.op === 'handled' && !e.late) {
+      addNote(idx, 'info', `In time: the handler came before Node's check (${stepLink(enqueueAt.get(key), 'rejected here')}), ` +
+        'so this rejection never counts as unhandled.');
+    } else if (e.op === 'handled') {
+      const html = 'Too late: Node had already reported this rejection as unhandled. Attaching a handler now makes Node emit ' +
+        '<code>\'rejectionHandled\'</code>; with no listener for it, Node prints a PromiseRejectionHandledWarning.' +
+        docs('rejectionHandled');
+      addNote(idx, 'warn', html);
+      gotcha('lateHandler', 'A rejection was handled too late', html, idx);
+    } else if (e.op === 'unhandled') {
+      const html = unhandledWhy(e) + docs('unhandled', 'rejectionsFlag');
+      addNote(idx, e.listeners > 0 ? 'info' : 'warn', html);
+      gotcha('unhandled', 'Unhandled promise rejection', html, idx);
+    }
+  }
+}
+
+// The innermost `await` still open on the probe stack: code that suspended
+// there and gave control back to the event loop.
+function pausedAwait(state) {
+  for (let k = state.src.stack.length - 1; k >= 0; k--) {
+    const n = nodeInfo(state.src.stack[k]);
+    if (n && /^await\b/.test(n.src.text.slice(n.start, n.end)))
+      return { text: snippet(n), line: lineOf(n.src, n.start) };
+  }
+  return null;
+}
+
+function nameOf(key, fallback) {
+  const n = names.get(key);
+  return n && n !== '<anonymous>' ? n : fallback;
+}
+
+// The poll timeout, explained from the queues at that moment.
+function pollWhy(e, state) {
+  const visible = (q, id) => $('showInternal').checked || !internalIds.has(`${q}:${id}`);
+  const t = e.timeout;
+  if (t === 0) {
+    if (state.queues.immediate.length)
+      return 'libuv checks for completed I/O <b>without blocking</b>, because immediates are waiting for the check phase.';
+    return 'libuv checks for completed I/O <b>without blocking</b>, because something is already due.';
+  }
+  if (t < 0) {
+    const keepers = state.alive?.alive ? describeResources(state.alive.resources) : '';
+    return 'libuv <b>sleeps until I/O arrives</b>. No timer or immediate is pending, so only open handles (servers, sockets, ' +
+      'pending fs work) can wake it' + (keepers ? `. At the last check, the loop was kept alive by: ${keepers}.` :
+      '. If there were none, the process would exit instead.');
+  }
+  const next = state.queues.timers[0];
+  if (!next)
+    return `libuv waits for I/O for up to <b>${t} ms</b>. None of your timers is pending: that deadline comes from a timer inside Node. ` +
+      'Completed I/O (such as a file read finishing on the thread pool) wakes it up earlier.';
+  const label = visible('timers', next.id) ? `<code>${esc(next.name)}</code>` : 'a timer inside Node';
+  return `libuv waits for I/O for up to <b>${t} ms</b>: that is when the nearest timer, ${label}, becomes due. ` +
+    'If I/O completes sooner, poll wakes up early.';
+}
+
+// "Why now?" for the current event.
+function ruleFor(e, idx, state) {
+  const i = info[idx] ?? {};
+  if (e.kind === 'alive') {
+    if (e.what === 'loop-exit')
+      return 'uv_run has returned. Node now emits <code>\'beforeExit\'</code>: if a listener schedules more work, the loop starts again; otherwise the process exits.';
+    const rule = 'libuv keeps looping while anything refs it: active handles (servers, sockets, timers, pending immediates) ' +
+      'or requests still in flight (fs, DNS). Handles and timers you <code>unref()</code> do not count.';
+    if (e.what === 'loop-start') return rule;
+    return `After every iteration libuv checks whether to go on. ${rule}` +
+      (e.alive ? '' : ' Nothing does now, so the loop stops after this iteration.');
+  }
+  if (e.kind === 'phase' && e.begin && e.phase === 'beforeExit')
+    return 'The loop ran out of work. Node emits <code>\'beforeExit\'</code> so code can schedule more: if it does, the loop ' +
+      'starts again, and <code>\'beforeExit\'</code> fires again the next time it empties. It is not emitted for explicit ' +
+      'exits such as <code>process.exit()</code> or uncaught exceptions.';
+  if (e.kind === 'queue' && e.queue === 'rejection' && e.op === 'unhandled')
+    return `${RULES.rejectionCheck} Any rejection still without a handler at that point is reported.`;
+  if (e.kind === 'phase' && e.begin && PHASE_WHY[e.phase]) return `The <b>${e.phase}</b> phase ${PHASE_WHY[e.phase]}`;
+  if (e.kind === 'io' && e.begin) {
+    const what = PROVIDERS[e.provider] ?? esc(e.provider);
+    return `Poll phase: libuv reported that ${what} completed, so Node calls its JavaScript callback now.`;
+  }
+  if (e.kind === 'drain')
+    return e.what === 'ticks'
+      ? 'A callback Node called from the loop (or the main script) just returned to Node. Before the loop goes on, Node empties the nextTick queue, then the microtask queue, and repeats until both are empty.'
+      : 'A callback Node called from the loop (or the main script) just returned, and no nextTick is pending, so Node asks V8 to run all queued microtasks.';
+  if (e.kind === 'act') {
+    if (e.op === 'enter') return 'Calling an async function runs its body right away, synchronously, up to its first <code>await</code>.';
+    if (e.op === 'exit') return 'The call returned (or threw). That settles the promise it returned, and code awaiting that promise continues in a later microtask.';
+    if (e.op === 'await') return '<code>await</code> always pauses the async function, even when the value is already there. ' +
+      'Control goes back to the caller, and then to whatever the event loop has queued. The rest of the function runs later, ' +
+      'in a microtask. So every <code>await</code> is a point where other code can run and change state this function relies on.';
+    return 'The awaited value settled, so V8 queued a job to continue the function, and that job is running now. ' +
+      'Code between two <code>await</code>s runs without interruption; the gaps at each <code>await</code> do not.';
+  }
+  if (e.kind === 'queue' && e.moduleBody && e.op === 'run')
+    return 'Node\'s ES module loader is an async function that <code>await</code>s while it loads and links your module, ' +
+      'and code after an <code>await</code> resumes in a microtask. So your top-level code runs inside one. Promise jobs and ' +
+      '<code>queueMicrotask()</code> callbacks it queues join the same drain and run before any nextTick. A CommonJS main ' +
+      'script is not a microtask, so there nextTicks run first.';
+  if (e.kind === 'queue' && e.op === 'then')
+    return 'A promise calls its callbacks only once it settles. Attaching one to a pending promise just registers it ' +
+      'on that promise: nothing is queued until the promise is resolved or rejected.';
+  if (e.kind === 'queue' && e.op === 'enqueue' && isUserReaction(e)) {
+    if (e.cause === 'then')
+      return 'Promise callbacks never run synchronously. Even when the promise has already settled, the callback is ' +
+        'queued as a microtask instead of being called right away, so the code after this line runs first.';
+    return 'Settling a promise queues every callback attached to it, in the order they were attached. Each one runs ' +
+      'as a microtask once the code running now returns.';
+  }
+  if (e.kind !== 'queue' || e.op !== 'run') return '';
+  const prev = i.pausedAt && !i.prevDone
+    ? `The code paused at <code>${esc(i.pausedAt.text)}</code> (line ${i.pausedAt.line}) and handed control back`
+    : i.inIo ? "The I/O callback's JavaScript just returned (Node drains these queues before leaving the callback)" :
+    i.prevDone?.name === MODULE_JOB_NAME ? 'Your module\'s top-level code just finished' :
+    i.prevDone ? `<code>${esc(i.prevDone.name)}</code> just finished` :
+    i.phase === 'main script' ? 'The main script just finished' : 'The previous callback just finished';
+  switch (e.queue) {
+    case 'nextTick':
+      return `${prev}. Each time a callback Node called from the loop returns, Node empties the <b>nextTick queue</b>, before any promise job.`;
+    case 'microtask': {
+      if (i.resumes)
+        return `This job <b>resumes the code paused at</b> <code>${esc(i.resumes.length > 48 ? i.resumes.slice(0, 45) + '…' : i.resumes)}</code>. ` +
+          'It was queued when the awaited value settled. Everything after that <code>await</code> runs inside this microtask.';
+      let why = i.prevDone?.queue === 'microtask'
+        ? `${prev}. V8 keeps draining the <b>microtask queue</b> in order, including jobs queued during this drain, before Node gets back to nextTicks.`
+        : `${prev}. With the nextTick queue empty, V8 runs the <b>microtask queue</b> in order. Jobs queued while it drains run in this same drain.`;
+      if (i.prevMacro && i.phase === (i.prevMacro.queue === 'timers' ? 'timers' : 'check'))
+        why += ` This happens right after <code>${esc(i.prevMacro.name)}</code>, before the next timer or immediate: ` +
+          'microtasks run after <i>each</i> timer or immediate callback, not after all of them (since Node 11).';
+      return why;
+    }
+    case 'timers':
+      return (i.enqueueInIo ? 'Queued inside an I/O callback (poll phase). The loop goes poll → check → timers, so this ' +
+        'timer waits for the <b>check phase</b> first: a <code>setImmediate</code> queued from the same callback always ' +
+        'runs before it, whatever the delay. ' : '') +
+        'In the <b>timers phase</b>, Node runs every timer whose delay has passed. It goes one timer list (one per delay) ' +
+        'at a time, starting with the list whose next timer is due first, and runs each list in the order its timers were set. ' +
+        'Between two timer callbacks it drains nextTicks and microtasks.';
+    case 'immediate':
+      if (i.enqueuePhase === 'check')
+        return 'This immediate was queued while the check phase was already running, so it waited for the <b>next loop iteration</b>.';
+      if (i.enqueueInIo)
+        return 'Queued inside an I/O callback (poll phase). The <b>check phase</b> comes right after poll, so it runs before any timer.';
+      return 'The <b>check phase</b> runs every <code>setImmediate</code> callback that was queued before it started.';
+  }
+  return '';
+}
+
+// Reference pages for the rule behind an event.
+function docsFor(e) {
+  if (e.kind === 'alive') return e.what === 'loop-exit' ? ['beforeExit'] : ['resources', 'unref'];
+  if (e.kind === 'phase' && e.begin) {
+    return { timers: ['setTimeout', 'loop'], poll: ['libuv', 'loop'], check: ['immediate', 'immediateGuide'],
+      beforeExit: ['beforeExit'] }[e.phase] ?? (PHASE_WHY[e.phase] ? ['loop'] : []);
+  }
+  if (e.kind === 'drain') return ['nextTick', 'loop'];
+  if (e.kind === 'io' && e.begin) return ['libuv', 'loop'];
+  if (e.kind === 'act') return ['mdnAwait'];
+  if (e.kind === 'queue' && e.moduleBody) return ['esmVsCjs', 'tickVsMicrotask'];
+  if (e.kind === 'queue' && (e.op === 'then' || (e.op === 'enqueue' && isUserReaction(e)))) return ['mdnThen', 'mdnMicrotask'];
+  if (e.kind !== 'queue' || e.op !== 'run') return [];
+  return { nextTick: ['nextTick', 'nextTickGuide'], microtask: ['queueMicrotask', 'loop'],
+    timers: ['setTimeout', 'loop'], immediate: ['immediate', 'immediateGuide'] }[e.queue] ?? [];
+}
+
+const siteLabel = (site) => site.replace(/^(\S+) .*\/([^/]+:\d+):\d+$/, '$1 $2').replace(/^<anonymous> /, 'top level, ');
+
+function causeLink(e, idx) {
+  if (e.kind !== 'queue' || e.op !== 'run') return '';
+  const enq = info[idx]?.enqueueIdx;
+  if (enq === undefined && e.job === 'thenable job' && e.site)
+    return `<div class="cause">Queued when the promise created at <code>${esc(siteLabel(e.site))}</code> was resolved with ` +
+      'another promise. V8 reports no event for that moment.</div>';
+  if (enq === undefined) return '<div class="cause">Queued before tracing started, or by Node itself.</div>';
+  const site = all[enq].site;
+  if (all[enq].rearm) return `<div class="cause">Re-armed at ${stepLink(enq, `step ${steps.findIndex((s) => s.idx === enq) + 1}`)} by <code>setInterval</code>, after its previous run.</div>`;
+  const where = all[enq].moduleBody ? ' by Node\'s ES module loader' : site ? ` by <code>${esc(siteLabel(site))}</code>` : ' by Node internals';
+  const stepIdx = steps.findIndex((s) => s.idx === enq);
+  const label = stepIdx >= 0 ? `step ${stepIdx + 1}` : 'a hidden step';
+  if (all[enq].cause === 'settle' && isUserReaction(all[enq])) {
+    // The `.then` line only attached it; the settle is what queued it.
+    const line = /:(\d+):\d+$/.exec(all[enq].bySite ?? '')?.[1];
+    const then = info[enq]?.thenIdx;
+    const thenStep = then === undefined ? -1 : steps.findIndex((s) => s.idx === then);
+    return `<div class="cause">Queued at ${stepLink(enq, label)}, when the promise it waited on was ${all[enq].outcome}` +
+      `${line ? ` at line ${line}` : ''}. ${thenStep >= 0 ? `It was attached at ${stepLink(then, `step ${thenStep + 1}`)}` : 'It was attached'}` +
+      `${site ? ` by <code>${esc(siteLabel(site))}</code>` : ''}.</div>`;
+  }
+  return `<div class="cause">Queued at ${stepLink(enq, label)}${where}.</div>`;
+}
+
+// What Node will run next, following its rules, given the queues right now.
+function predict(state) {
+  const vis = (q, id) => $('showInternal').checked || !internalIds.has(`${q}:${id}`);
+  const out = [];
+  const add = (q, x, why) => out.push({ key: `${q}:${x.id}`, name: x.name, q, why });
+  const ticks = () => { for (const x of state.queues.nextTick) if (vis('nextTick', x.id))
+    add('nextTick', x, state.inMicrotasks ? 'nextTick queue: once V8 has emptied the microtask queue'
+      : 'nextTick queue: first, once the running callback returns to Node'); };
+  const micro = () => { for (const x of state.queues.microtask) if (vis('microtask', x.id))
+    add('microtask', x, state.inMicrotasks ? 'microtask queue: V8 is draining it now and empties it before any nextTick'
+      : 'microtask queue: after the nextTick queue is empty'); };
+  // processTicksAndRejections() runs nextTicks, then all microtasks, so a
+  // nextTick queued by a microtask waits for that drain to finish.
+  if (state.inMicrotasks) { micro(); ticks(); } else { ticks(); micro(); }
+
+  const phase = state.phase === 'between phases' ? `after ${state.prevPhase}` : state.phase;
+  const timers = state.queues.timers.filter((x) => vis('timers', x.id));
+  const imms = state.queues.immediate.filter((x) => vis('immediate', x.id));
+  const later = (x) => state.phase === 'check' && x.phase === 'check' && x.seq === state.phaseSeq;
+  const T = () => timers.forEach((x) => add('timers', x, `timers phase, once its ${x.delay} ms have passed` +
+    (x.unref ? ' (unref\'d: only if something else keeps the loop alive)' : '')));
+  const I = (pick, why) => imms.filter(pick).forEach((x) => add('immediate', x, why));
+  const checkWhy = 'check phase (setImmediate)';
+  if (phase === 'check') {
+    I((x) => !later(x), 'still in this check phase');
+    T();
+    I(later, 'next iteration\'s check phase (queued during this one)');
+  } else if (['timers', 'main script', 'after check', 'close', 'after close'].includes(phase)) {
+    T(); I(() => true, checkWhy);
+  } else {
+    I(() => true, checkWhy + ', right after poll'); T();
+  }
+  return out.slice(0, 6);
+}
+
+function actualNext() {
+  const vis = (q, id) => $('showInternal').checked || !internalIds.has(`${q}:${id}`);
+  for (let j = steps[cur].idx + 1; j < all.length; j++) {
+    const o = all[j];
+    if (o.kind === 'queue' && o.op === 'run' && vis(o.queue, o.id))
+      return { key: `${o.queue}:${o.id}`, name: nameOf(`${o.queue}:${o.id}`, o.id), q: o.queue, idx: j };
+    if (o.kind === 'io' && o.begin) return { key: 'io', name: ioName(o), q: 'io', idx: j };
+  }
+  return null;
+}
+
+// Why Node ran something other than the first prediction.
+function whyDiffers(list, actual) {
+  if (actual.q === 'io') return 'Poll found completed I/O before that.';
+  if (all[actual.idx]?.job === 'thenable job' && info[actual.idx]?.enqueueIdx === undefined)
+    return 'V8 queued it, with no event, when a promise was resolved with another promise, so no queue here shows it.';
+  if (list[0]?.q === 'timers' && actual.q === 'immediate') return 'The timer was not due yet when the loop reached the timers phase.';
+  if (list[0]?.q === 'timers') return 'The timer was not due yet.';
+  if (!list.length) return 'It was queued after this step.';
+  return '';
+}
+
+function renderUpNext(state) {
+  if ($('predictMode').checked) return renderGuess(state);
+  const list = predict(state);
+  const vis = (q, id) => q === 'io' || $('showInternal').checked || !internalIds.has(`${q}:${id}`);
+  const running = state.running.findLast((x) => vis(x.queue, x.id));
+  let html = running ? `<li><code>${esc(running.name)}</code> finishes first <span class="meta">it is running now</span></li>` : '';
+  html += list.map((p) => `<li><code>${esc(p.name)}</code> <span class="meta">${esc(p.why)}</span></li>`).join('');
+  if (!list.length) html += '<li class="empty">Nothing is queued yet.</li>';
+  $('upnext').innerHTML = html;
+
+  const actual = actualNext();
+  let verdict;
+  if (!actual) {
+    const keepers = state.alive?.alive ? describeResources(state.alive.resources) : '';
+    verdict = list.length || running ? 'Nothing else runs in this trace.' : keepers
+      ? `Nothing is queued, and nothing else runs in this trace. At the last check the loop was still kept alive by: ${keepers}.`
+      : 'Nothing is queued. Unless something still keeps the loop alive (a server, a socket, pending I/O), the loop ends and the process exits.';
+  } else if (all[actual.idx] && enqueuedAfter(actual, steps[cur].idx)) {
+    const enq = info[actual.idx].enqueueIdx;
+    const at = stepLink(enq, `step ${(steps.findIndex((s) => s.idx === enq) + 1) || '?'}`);
+    verdict = state.pending.some((x) => `microtask:${x.id}` === actual.key)
+      ? `Next to run: <code>${esc(actual.name)}</code>. It waits on a pending promise, so it is in no queue yet: ` +
+        `the promise settles and queues it at ${at}.`
+      : `Next to run: <code>${esc(actual.name)}</code>. It is not in any queue yet, so it can't be predicted from here: ` +
+        `the code running now queues it at ${at}.`;
+  } else if (actual.q === 'io' && !list.length) {
+    verdict = `Next to run: ${stepLink(actual.idx, `<code>${esc(actual.name)}</code>`)}. I/O callbacks wait in no queue: ` +
+      'libuv reports them in the poll phase once the operation finishes, so none of the queues can predict them.';
+  } else if (list[0]?.key === actual.key) {
+    verdict = `Actually next: <code>${esc(actual.name)}</code> ✓ as predicted.`;
+  } else {
+    const why = whyDiffers(list, actual);
+    verdict = `Actually next: ${stepLink(actual.idx, `<code>${esc(actual.name)}</code>`)} ✗ differs.${why ? ' ' + why : ''}`;
+  }
+  $('actual').innerHTML = verdict;
+}
+
+// Predict mode: offer what is queued (in neutral order) and let the user
+// pick before revealing what Node actually ran.
+let guessCtx = null;
+let reveal = null;       // { step, html } shown once the guessed callback is reached
+const score = { right: 0, total: 0 };
+
+function renderGuess(state) {
+  const actual = actualNext();
+  const list = predict(state);
+  guessCtx = null;
+  let html;
+  if (!actual) {
+    html = '<li class="empty">Nothing else runs in this trace.</li>';
+  } else if (enqueuedAfter(actual, steps[cur].idx)) {
+    html = '<li class="empty">The next callback is not queued yet. Step on until it is.</li>';
+  } else {
+    const options = new Map(list.map((p) => [p.key, p.name]));
+    const io = state.alive?.resources.some((r) => r.type !== 'Timeout' && r.type !== 'Immediate');
+    if (io || actual.q === 'io') options.set('io', 'an I/O callback');
+    if (!options.has(actual.key)) options.set(actual.key, actual.name);
+    const sorted = [...options].sort((a, b) => a[1].localeCompare(b[1]));
+    html = '<li class="empty">Which callback runs next?</li>' + sorted.map(([k, n]) =>
+      `<li><button class="guess" data-guess="${esc(k)}">${esc(n)}</button></li>`).join('');
+    guessCtx = { actual, list };
+  }
+  $('upnext').innerHTML = html;
+  $('actual').innerHTML = score.total ? `Score: ${score.right} / ${score.total}` : 'Pick one to check your guess.';
+}
+
+function checkGuess(key, guessed) {
+  const { actual, list } = guessCtx;
+  const right = key === actual.key;
+  score.total++;
+  if (right) score.right++;
+  const rule = list.find((p) => p.key === actual.key)?.why;
+  let html = right ? `✓ Right: <code>${esc(actual.name)}</code> runs next.`
+    : `✗ You picked <code>${esc(guessed)}</code>, but <code>${esc(actual.name)}</code> runs next.`;
+  if (rule) html += ` Node's rule: ${esc(rule)}.`;
+  if (!right && list[0]?.key !== actual.key) html += ` ${whyDiffers(list, actual)}`;
+  const step = steps.findIndex((s) => s.idx >= actual.idx);
+  reveal = { step, html: `<div class="reveal ${right ? '' : 'miss'}">${html} <small>Score: ${score.right} / ${score.total}</small></div>` };
+  go(step >= 0 ? step : cur + 1);
+}
+
+function enqueuedAfter(actual, idx) {
+  const enq = info[actual.idx]?.enqueueIdx;
+  return enq !== undefined && enq > idx;
+}
+
+function renderGotchas() {
+  $('gotchaBadge').textContent = gotchas.length || '';
+  $('gotchas').innerHTML = gotchas.length
+    ? gotchas.map((g) => `<li>${stepLink(g.idx, esc(g.title))}</li>`).join('')
+    : '<li class="empty">None detected in this run.</li>';
+}
+
+function jumpToIdx(idx) {
+  let n = steps.findIndex((s) => s.idx >= idx);
+  if (n < 0) n = steps.length - 1;
+  if (n === cur) return;
+  returnTo = cur;
+  go(n);
+}
+
+function render() {
+  if (!steps.length) return;
+  const e = all[steps[cur].idx];
+  const state = stateAt(cur);
+  const showInternal = $('showInternal').checked;
+  const visible = (queue, id) => showInternal || !internalIds.has(`${queue}:${id}`);
+
+  const idx = steps[cur].idx;
+  // One line of what happened; warnings stay visible, the rest folds away.
+  let explain = '';
+  if (reveal?.step === cur) explain += reveal.html;
+  else reveal = null;
+  explain += `<div class="now">${describe(e, state)}</div>`;
+  const stepNotes = notes.get(idx) ?? [];
+  const noteHtml = (n) => `<div class="note ${n.level}">${n.level === 'warn' ? '⚠ ' : ''}${n.html}</div>`;
+  for (const n of stepNotes) if (n.level === 'warn') explain += noteHtml(n);
+  const why = ruleFor(e, idx, state);
+  const refs = docsFor(e);
+  let more = why ? `<div class="why">${why}${refs.length ? docs(...refs) : ''}</div>` : '';
+  more += causeLink(e, idx);
+  for (const n of stepNotes) if (n.level === 'warn' && n.more) more += `<div class="note">${n.more}</div>`;
+  for (const n of stepNotes) if (n.level !== 'warn') more += noteHtml(n);
+  if (stepNotes.some((n) => n.timed)) more += `<div class="timing">${TIMING_NOTE}</div>`;
+  if (more) {
+    const label = why ? 'Why now?' : 'More';
+    explain += `<details class="more"${whyOpen ? ' open' : ''}><summary>${label}</summary>${more}</details>`;
+  }
+  if (returnTo !== null && returnTo !== cur)
+    explain += `<div class="cause"><a href="#" data-back="1">← back to step ${returnTo + 1}</a></div>`;
+  $('explain').innerHTML = explain;
+  renderTimelineCursor(state);
+  renderWaitWhy(state);
+  renderUpNext(state);
+  renderSource(e, state);
+  renderLoop(e, state);
+
+  const con = $('console');
+  con.innerHTML = state.console.map((t, i) =>
+    `<span class="${e.kind === 'console' && i === state.console.length - 1 ? 'new' : ''}">${esc(t)}</span>`).join('');
+  con.scrollTop = con.scrollHeight;
+
+  const from = Math.max(0, cur - 40), to = Math.min(steps.length, cur + 40);
+  let html = '';
+  for (let i = from; i < to; i++)
+    html += `<div data-i="${i}" class="${i === cur ? 'cur' : ''}">${esc(shortLabel(all[steps[i].idx]))}</div>`;
+  $('log').innerHTML = html;
+  $('log').querySelector('.cur')?.scrollIntoView({ block: 'center' });
+
+  $('scrub').value = cur;
+  $('pos').textContent = `${cur + 1} / ${steps.length}`;
+  $('back').disabled = $('first').disabled = cur === 0;
+  $('step').disabled = cur >= steps.length - 1;
+}
+
+// ---- Timeline -------------------------------------------------------------
+// Lanes for phases, callbacks, nextTicks/microtasks and output, plus one bar
+// per queued callback showing how long it waited. Built once per trace; only
+// the cursor moves while stepping.
+
+const TL = { scale: 'order', zoom: 1, xOf: null, blocks: [], cur: -1 };
+const TL_LANES = ['phases', 'callbacks', 'ticks · µtasks', 'output'];
+const TL_ROW = 22, TL_WAIT_ROW = 17, TL_WAIT_ROWS = 8;
+const TL_ACT_LANES = 8;  // async calls shown as lanes; later ones are left out
+const TL_COLORS = { timers: 'var(--timer)', immediate: 'var(--imm)', nextTick: 'var(--tick)',
+  microtask: 'var(--micro)', io: 'var(--io)', rejection: 'var(--rej)' };
+
+// Index of the begin event matching the phase end at `idx`.
+function phaseBegin(idx) {
+  const name = all[idx].phase;
+  for (let j = idx - 1; j >= 0; j--) if (all[j].kind === 'phase' && all[j].phase === name && all[j].begin) return j;
+  return -1;
+}
+
+function buildTimeline() {
+  if (!all.length) return;
+  const showInt = $('showInternal').checked;
+  const showEmpty = $('showEmpty').checked;
+  const vis = (q, id) => showInt || !internalIds.has(`${q}:${id}`);
+  // Order scale: one slot per event worth seeing, so quick bursts stay readable.
+  const keep = (e, idx) => {
+    if (e.kind === 'queue') return ['enqueue', 'run', 'done', 'reject', 'unhandled', 'handled'].includes(e.op) && vis(e.queue, e.id);
+    if (e.kind === 'io') return showInt || userIo.has(e);
+    // A poll that may block is where the loop sleeps, so it stays even when empty.
+    if (e.kind === 'phase') {
+      if (e.phase === 'iteration') return false;
+      if (showEmpty || !isEmptyPhase(all, idx)) return true;
+      const begin = e.begin ? e : all[phaseBegin(idx)];
+      return e.phase === 'poll' && begin?.timeout !== 0;
+    }
+    return e.kind === 'console' || e.kind === 'act' || (e.kind === 'alive' && e.what !== 'alive');
+  };
+  const slot = new Int32Array(all.length);
+  let n = 0;
+  for (let i = 0; i < all.length; i++) { if (keep(all[i], i)) n++; slot[i] = n; }
+  const t0 = all[0].ts;
+  // Short traces stretch to fill the panel; zoom scales from there.
+  const room = Math.max(($('tlScroll').clientWidth || 0) - 90, 0);
+  const spanMs = (all.at(-1).ts - t0) / 1000;
+  const unit = Math.max(14, n ? room / n : 0) * TL.zoom;
+  const perMs = Math.max(8, spanMs ? room / spanMs : 0) * TL.zoom;
+  TL.xOf = TL.scale === 'order' ? (i) => slot[i] * unit : (i) => ((all[i].ts - t0) / 1000) * perMs;
+  const x = TL.xOf;
+
+  const blocks = [];
+  const add = (lane, i0, i1, cls, color, label, title) => blocks.push({ top: 4 + lane * TL_ROW, i0, i1, cls, color, label, title });
+  const phaseOpen = [];
+  const runOpen = new Map();
+  const ioOpen = [];
+  const waits = [];
+  const waitOpen = new Map();
+  let mainEnd = null;
+  for (let i = 0; i < all.length; i++) {
+    const e = all[i];
+    if (e.kind === 'phase' && e.phase !== 'iteration') {
+      if (mainEnd === null && e.begin) mainEnd = i;
+      if (e.begin) phaseOpen.push(i);
+      else {
+        const b = phaseOpen.pop();
+        if (b !== undefined && keep(all[b], b)) {
+          const sleep = e.phase === 'poll' && all[b].timeout !== 0;
+          add(0, b, i, 'ph', '', sleep ? 'poll (waiting for I/O)' : e.phase,
+              sleep ? `poll phase: libuv may sleep here (timeout ${all[b].timeout} ms)` : `${e.phase} phase`);
+        }
+      }
+    } else if (e.kind === 'alive' && e.what === 'loop-start' && mainEnd === null) {
+      mainEnd = i;
+    } else if (e.kind === 'io' && keep(e, i)) {
+      if (e.begin) ioOpen.push(i);
+      else { const b = ioOpen.pop(); if (b !== undefined) add(1, b, i, '', TL_COLORS.io, 'I/O', ioName(all[b])); }
+    } else if (e.kind === 'console') {
+      add(3, i, i, 'out', '', '', e.text.trimEnd());
+    } else if (e.kind === 'queue' && vis(e.queue, e.id)) {
+      const key = `${e.queue}:${e.id}`;
+      const name = nameOf(key, String(e.id));
+      if (isEnqueue(e)) waitOpen.set(key, i);
+      if (e.op === 'run') {
+        runOpen.set(key, i);
+        const w = waitOpen.get(key);
+        if (w !== undefined) { waits.push({ i0: w, i1: i, q: e.queue, name }); waitOpen.delete(key); }
+      } else if (e.op === 'done' && runOpen.has(key)) {
+        const lane = e.queue === 'nextTick' || e.queue === 'microtask' ? 2 : 1;
+        add(lane, runOpen.get(key), i, '', TL_COLORS[e.queue], name, `${QUEUE_NAMES[e.queue]} callback ${name}`);
+        runOpen.delete(key);
+      } else if ((e.op === 'cancel' || e.op === 'unhandled' || e.op === 'handled') && waitOpen.has(key)) {
+        waits.push({ i0: waitOpen.get(key), i1: i, q: e.queue, name: `${name} (${e.op})` });
+        waitOpen.delete(key);
+      }
+    }
+  }
+  if (mainEnd !== null) add(0, 0, mainEnd, 'ph main', '', 'main script', 'main script, then its nextTicks and microtasks');
+  for (const [key, i0] of waitOpen) waits.push({ i0, i1: all.length - 1, q: key.split(':')[0], name: `${nameOf(key, key)} (never ran)` });
+
+  // One lane per async call: running between its awaits, paused at each.
+  const actLanes = [...acts.values()].slice(0, TL_ACT_LANES);
+  // The number goes first so a truncated label still tells calls apart.
+  const lanes = [...TL_LANES, ...actLanes.map((a) => a.name.replace(/^(.*) (#\d+)$/, '$2 $1'))];
+  actLanes.forEach((a, k) => {
+    const lane = TL_LANES.length + k;
+    const last = all.length - 1;
+    let from = a.enterIdx;
+    for (const p of a.pauses) {
+      add(lane, from, p.awaitIdx, 'act', '', a.name, `${a.name} running`);
+      const aw = awaitLabel(a, p.at);
+      const end = pauseEnd(p);
+      blocks.push({ top: 4 + lane * TL_ROW, i0: p.awaitIdx, i1: end ?? last, cls: 'wait', color: 'var(--run)',
+        label: `⏸ line ${aw.line}`, title: `${a.name} paused at ${aw.text}${end === undefined ? ' (never resumed)' : ''}` });
+      from = end ?? last;
+    }
+    if (from < last || a.exitIdx !== null) add(lane, from, a.exitIdx ?? last, 'act', '', a.name, `${a.name} running`);
+  });
+
+  // Waiting bars go in the first row that is free at their start.
+  const rowEnd = [];
+  const waitTop = 4 + lanes.length * TL_ROW + 6;
+  waits.sort((a, b) => a.i0 - b.i0);
+  let tooShort = 0;
+  for (const w of waits) {
+    const x0 = x(w.i0);
+    // Waits too short to see would only add noise (e.g. a chain of nextTicks).
+    if (x(w.i1) - x0 < 6) { tooShort++; continue; }
+    let r = rowEnd.findIndex((end) => end + 4 <= x0);
+    if (r < 0) r = rowEnd.length < TL_WAIT_ROWS ? rowEnd.length : TL_WAIT_ROWS - 1;
+    rowEnd[r] = Math.max(x(w.i1), x0 + 4);
+    blocks.push({ top: waitTop + r * TL_WAIT_ROW, i0: w.i0, i1: w.i1, cls: 'wait', color: TL_COLORS[w.q],
+      label: w.name, title: `${w.name} waited in the ${QUEUE_NAMES[w.q]} queue` });
+  }
+  TL.blocks = blocks;
+  const width = Math.max(...blocks.map((b) => x(b.i1)), 0) + 80;
+  const height = waitTop + Math.max(rowEnd.length, 1) * TL_WAIT_ROW + 6;
+
+  let html = lanes.map((_, k) => `<div class="tlRow" style="top:${2 + k * TL_ROW}px"></div>`).join('') +
+    `<div class="tlRow" style="top:${waitTop - 3}px"></div>`;
+  html += blocks.map((b, k) => {
+    const left = x(b.i0), w = Math.max(x(b.i1) - left, 3);
+    return `<div class="tb ${b.cls}" data-b="${k}" data-i="${b.i0}" style="left:${left}px;width:${w}px;top:${b.top}px;--c:${b.color}" ` +
+      `title="${esc(b.title)}">${b.cls === 'out' ? '' : esc(b.label)}</div>`;
+  }).join('');
+  html += '<div id="tlCursor"></div>';
+  const inner = $('tlInner');
+  inner.innerHTML = html;
+  if (inner.style) { inner.style.width = `${width}px`; inner.style.height = `${height}px`; }
+  $('tlLabels').innerHTML = lanes.map((l, k) => `<div style="top:${4 + k * TL_ROW}px" title="${esc(l)}">${esc(l)}</div>`).join('') +
+    `<div style="top:${waitTop}px" title="${tooShort ? `${tooShort} waits too short to draw at this zoom` : ''}">waiting in a queue</div>`;
+  if ($('tlLabels').style) $('tlLabels').style.height = `${height}px`;
+  $('timingNote').classList.toggle('hidden', TL.scale !== 'real');
+  $('timingNote').innerHTML = TIMING_NOTE;
+  TL.cur = -1;
+}
+
+function renderTimelineCursor() {
+  if (!TL.xOf || !steps.length) return;
+  const idx = steps[cur].idx;
+  const left = TL.xOf(idx);
+  const cursor = $('tlCursor');
+  if (cursor.style) cursor.style.left = `${left}px`;
+  // Outline the innermost callback running at this step.
+  let best = -1;
+  TL.blocks.forEach((b, k) => {
+    if (b.cls === '' && b.i0 <= idx && idx <= b.i1 && (best < 0 || b.top >= TL.blocks[best].top)) best = k;
+  });
+  if (best !== TL.cur) {
+    document.querySelector?.(`.tb[data-b="${TL.cur}"]`)?.classList.remove('cur');
+    document.querySelector?.(`.tb[data-b="${best}"]`)?.classList.add('cur');
+    TL.cur = best;
+  }
+  const sc = $('tlScroll');
+  if (sc.clientWidth && (left < sc.scrollLeft + 20 || left > sc.scrollLeft + sc.clientWidth - 40))
+    sc.scrollLeft = Math.max(0, left - sc.clientWidth / 3);
+}
+
+// ---- Why hasn't it run yet? ----------------------------------------------
+
+let asked = null;  // { q, id } of the queued item the user clicked
+
+function phaseHere(state) {
+  if (state.phase === 'main script') return 'the main script is still running, so the event loop has not started yet';
+  if (state.phase === 'between phases') return `the loop just finished the ${state.prevPhase} phase`;
+  return `the loop is in the ${state.phase} phase`;
+}
+
+function waitingWhy(state, q, id) {
+  const vis = (qq, i) => $('showInternal').checked || !internalIds.has(`${qq}:${i}`);
+  const list = state.queues[q];
+  const at = list.findIndex((x) => String(x.id) === id);
+  if (at < 0) return null;
+  const item = list[at];
+  const name = `<code>${esc(item.name)}</code>`;
+  const ahead = list.slice(0, at).filter((x) => vis(q, x.id)).length;
+  const running = state.running.filter((r) => r.queue === 'io' || vis(r.queue, r.id));
+  const busy = running.length
+    ? `JavaScript is still running (<code>${esc(running.at(-1).name)}</code>). Nothing else can start until it returns. `
+    : state.phase === 'main script' ? 'The main script has not finished yet. ' : '';
+  const plural = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+  switch (q) {
+    case 'nextTick':
+      return `${busy}${name} runs once the callback Node is running returns to it` +
+        (ahead ? `, after ${plural(ahead, 'nextTick callback', 'nextTick callbacks')} queued before it` : '') +
+        '. nextTicks run before any promise job, timer, I/O callback or immediate.';
+    case 'microtask': {
+      const ticks = state.queues.nextTick.filter((x) => vis('nextTick', x.id)).length;
+      return busy + (ticks ? `First the nextTick queue has to empty (${plural(ticks, 'callback', 'callbacks')} waiting). ` : '') +
+        `${name} then runs in queue order` + (ahead ? `, behind ${plural(ahead, 'other microtask', 'other microtasks')}` : '') +
+        '. All of this happens before the loop moves on to its next phase.';
+    }
+    case 'timers': {
+      const enq = enqueueAt.get(`timers:${item.id}`);
+      const nowTs = all[steps[cur].idx].ts;
+      const left = enq !== undefined ? (all[enq].ts + item.delay * 1000 - nowTs) / 1000 : 0;
+      const earlier = list.filter((x) => x !== item && x.due < item.due && vis(q, x.id)).length;
+      let html = left > 0.5
+        ? `${name} is not due yet: about ${left.toFixed(1)} ms to go of its ${item.delay} ms. `
+        : `${name} is already due. It runs the next time the loop reaches the timers phase, and ${phaseHere(state)}. `;
+      if (earlier) html += `${plural(earlier, 'other timer is', 'other timers are')} due before it. `;
+      if (item.unref) html += 'It is unref\'d: if nothing else keeps the loop alive, the process exits before it runs. ';
+      return busy + html;
+    }
+    case 'immediate':
+      if (state.phase === 'check' && item.phase === 'check' && item.seq === state.phaseSeq)
+        return `${busy}${name} was queued while this check phase was running, so it waits for the next iteration's check phase.`;
+      return `${busy}${name} runs in the check phase, which comes right after poll. Right now ${phaseHere(state)}` +
+        (ahead ? `, and ${plural(ahead, 'immediate is', 'immediates are')} ahead of it` : '') + '.';
+    case 'rejection':
+      return `${busy}${RULES.rejectionCheck} If nothing handles it by then, it is reported as unhandled.`;
+  }
+  return null;
+}
+
+function renderWaitWhy(state) {
+  const box = $('waitWhy');
+  if (!asked) { box.classList.add('hidden'); return; }
+  const why = waitingWhy(state, asked.q, asked.id);
+  box.classList.remove('hidden');
+  const key = `${asked.q}:${asked.id}`;
+  const first = all.findIndex((e) => e.kind === 'queue' && isEnqueue(e) && `${e.queue}:${e.id}` === key);
+  const gone = first > steps[cur].idx
+    ? `<code>${esc(asked.name)}</code> is not queued yet at this step: it gets queued at ${stepLink(first, 'this step')}.`
+    : `<code>${esc(asked.name)}</code> is not waiting any more: it has run or was removed.`;
+  box.innerHTML = '<button class="close" data-close="1" title="Close">×</button>' + (why ?? gone);
+}
+
+// ---- Expected output --------------------------------------------------------
+
+function stdoutLines() {
+  const out = [];
+  all.forEach((e, idx) => {
+    if (e.kind !== 'console' || e.stream !== 'stdout') return;
+    for (const text of e.text.replace(/\n$/, '').split('\n')) out.push({ text, idx });
+  });
+  return out;
+}
+
+function printedBy(line) {
+  const by = info[line.idx]?.by;
+  const at = stepLink(line.idx, 'see');
+  if (!by || by.queue === 'main') return `by the main script (${at})`;
+  if (by.queue === 'io') return by.label ? `by the I/O callback <code>${esc(by.label)}</code> (${at})` : `by an I/O callback (${at})`;
+  return `by the ${QUEUE_NAMES[by.queue]} callback <code>${esc(by.name)}</code> (${at})`;
+}
+
+// Why callback `a` ran before callback `b`.
+function orderWhy(a, b) {
+  if (!a || !b) return '';
+  const q1 = a.queue, q2 = b.queue;
+  const micro = (qq) => qq === 'nextTick' || qq === 'microtask';
+  if (q1 === 'main') return 'Synchronous code in the main script always finishes before any callback runs.';
+  if (q1 === q2 && q1 === 'timers')
+    return 'Both are timers. Node runs due timers one list (one per delay) at a time, each list in the order its timers were set.';
+  if (q1 === q2) return 'Both wait in the same queue, which runs in the order things were queued.';
+  if (q1 === 'nextTick' && q2 === 'microtask') return '<code>process.nextTick</code> callbacks run before promise jobs and <code>queueMicrotask</code> callbacks.';
+  if (micro(q1) && !micro(q2)) return 'nextTicks and microtasks run each time a callback Node called from the loop returns, before the loop moves on to timers, I/O or immediates.';
+  if (q1 === 'immediate' && q2 === 'timers') {
+    const inIo = info[b.runIdx]?.enqueueInIo;
+    return inIo ? 'The timer was set inside an I/O callback. After poll comes the check phase (setImmediate), and only then the next timers phase.'
+      : 'When the loop reached the timers phase, the timer was not due yet (it needs at least 1 ms), so the check phase ran the immediate first. From the main script this order can change between runs.';
+  }
+  if (q1 === 'timers' && q2 === 'immediate')
+    return 'The timer was already due when the loop reached the timers phase, which comes before the check phase. From the main script this order can change between runs.';
+  if (q1 === 'io' && q2 === 'timers') return 'The I/O finished and poll ran its callback before the timer was due.';
+  if (q1 === 'timers' && q2 === 'io') return 'The timer was due before the I/O finished.';
+  return '';
+}
+
+function renderExpect() {
+  if (!all.length) return;
+  const want = String($('expected').value ?? '').replace(/\s+$/, '').split('\n').map((l) => l.trimEnd());
+  const badge = $('outBadge');
+  const box = $('expectBox');
+  if (!want.some((l) => l !== '')) {
+    badge.textContent = '';
+    box.innerHTML = '<div class="verdict">Tip: type what you expect the script to print, next to the editor, and this tab ' +
+      'explains the first line where Node disagrees.</div>';
+    return;
+  }
+  const got = stdoutLines();
+  let k = -1;
+  for (let i = 0; i < Math.max(want.length, got.length) && k < 0; i++) if (want[i] !== got[i]?.text) k = i;
+  badge.textContent = k < 0 ? '✓' : '✗';
+  badge.className = k < 0 ? 'good' : 'bad';
+  if (k < 0) { box.innerHTML = `<div>✓ It printed what you expected: ${got.length} lines, in the same order.</div>`; return; }
+
+  const w = want[k], g = got[k];
+  let html;
+  if (!g) {
+    html = `Line ${k + 1}: you expected <code>${esc(w)}</code>, but the script printed only ${got.length} lines.`;
+  } else if (w === undefined) {
+    html = `It printed more than you expected. Line ${k + 1}, <code>${esc(g.text)}</code>, was printed ${printedBy(g)}.`;
+  } else {
+    const later = got.findIndex((l, i) => i > k && l.text === w);
+    html = `Line ${k + 1}: you expected <code>${esc(w)}</code>, but <code>${esc(g.text)}</code> was printed first, ${printedBy(g)}.`;
+    if (later >= 0) {
+      html += ` <code>${esc(w)}</code> was printed later (line ${later + 1}), ${printedBy(got[later])}.`;
+      const why = orderWhy(info[g.idx]?.by, info[got[later].idx]?.by);
+      if (why) html += `<div class="why"><b>Why?</b> ${why}</div>`;
+    } else {
+      html += ` <code>${esc(w)}</code> was never printed.`;
+    }
+  }
+  const rows = [];
+  for (let i = 0; i < Math.min(Math.max(want.length, got.length), 60); i++) {
+    const bad = want[i] !== got[i]?.text ? ' bad' : '';
+    rows.push(`<span class="h">${i + 1}</span><span class="${bad}">${esc(want[i] ?? '')}</span><span class="${bad}">${esc(got[i]?.text ?? '')}</span>`);
+  }
+  box.innerHTML = `<div>✗ ${html}</div><div class="diff"><span class="h">#</span><span class="h">expected</span>` +
+    `<span class="h">printed</span>${rows.join('')}</div>`;
+}
+
+// ---- Side tabs ------------------------------------------------------------
+
+function showTab(tab) {
+  $('sideBox').classList.remove('collapsed');
+  for (const b of document.querySelectorAll?.('#sideTabs [data-tab]') ?? []) {
+    b.classList.toggle('on', b.dataset.tab === tab);
+    b.setAttribute('aria-selected', String(b.dataset.tab === tab));
+  }
+  for (const p of document.querySelectorAll?.('[data-pane]') ?? []) p.classList.toggle('hidden', p.dataset.pane !== tab);
+}
+
+let whyOpen = false;
+try { whyOpen = localStorage.getItem('evloop-why-open') === '1'; } catch { /* default */ }
+
+// ---- Loop diagram ---------------------------------------------------------
+// Each phase with the queue it drains, then the queues drained after every
+// callback Node runs from the loop, wherever the loop is.
+
+function queueHelp(key) {
+  const q = QUEUES.find((x) => x.key === key);
+  return `<span class="help" tabindex="0" aria-label="What is the ${esc(q.label)}?">?` +
+    `<span class="tip" role="tooltip">${q.help}${docs(...q.docs)}</span></span>`;
+}
+
+// Tooltip for a queued or running callback: its full code, then where it
+// was queued ("in fn, file.js:line"; the path is a temp copy).
+function itemTitle(x) {
+  const code = x.code ? dedent(x.code) : '';
+  const m = /^(\S+) .*\/([^/]+:\d+):\d+$/.exec(x.site ?? '');
+  const site = m ? `Queued ${m[1] === '<anonymous>' ? '' : `in ${m[1]}, `}at ${m[2]}` : x.site ?? '';
+  return esc([code, site].filter(Boolean).join('\n\n'));
+}
+
+// Removes the indentation shared by a function's lines after the first,
+// which keeps the indentation it had in the file.
+function dedent(code) {
+  const rest = code.split('\n').slice(1).filter((l) => l.trim());
+  const pad = Math.min(...rest.map((l) => /^\s*/.exec(l)[0].length));
+  return rest.length ? code.split('\n').map((l, i) => (i ? l.slice(Math.min(pad, /^\s*/.exec(l)[0].length)) : l)).join('\n') : code;
+}
+
+function itemHtml(key, x, state) {
+  const color = QUEUES.find((q) => q.key === key).color;
+  const line = x.line ? `line ${x.line}` : '';
+  const extra = key === 'timers' ? `+${x.delay}ms${x.unref ? ' unref\'d' : ''}` :
+    key === 'microtask' && x.job !== 'queueMicrotask' ? esc(x.job) : '';
+  const meta = line || extra ? ` <span class="meta">${[line, extra].filter(Boolean).join(' · ')}</span>` : '';
+  const isAsked = asked && asked.q === key && asked.id === String(x.id);
+  return `<div class="item ${state.fresh === key + ':' + x.id ? 'fresh' : ''}${isAsked ? ' asked' : ''}" style="--c:${color}" ` +
+    `title="${itemTitle(x)}" tabindex="0" role="button" data-q="${key}" data-id="${esc(String(x.id))}" data-name="${esc(x.name)}">` +
+    `${esc(x.name)}${meta}</div>`;
+}
+
+function renderLoop(e, state) {
+  const vis = (q, id) => $('showInternal').checked || !internalIds.has(`${q}:${id}`);
+  const items = (key) => state.queues[key].filter((x) => vis(key, x.id));
+  const list = (key, none) => {
+    const xs = items(key);
+    return xs.length ? xs.map((x) => itemHtml(key, x, state)).join('') : `<div class="empty">${none}</div>`;
+  };
+  const running = state.running.filter((x) => x.queue === 'io' || vis(x.queue, x.id));
+  const top = running.at(-1);
+  const runningIn = (q) => running.filter((x) => x.queue === q)
+    .map((x) => `<div class="item running" title="${itemTitle(x)}">▶ ${esc(x.queue === 'io' ? x.label ?? x.name : x.name)}</div>`).join('');
+  const shown = state.phase === 'between phases' ? state.prevPhase : state.phase;
+  const ioSources = (state.alive?.resources ?? []).filter((r) => r.type !== 'Timeout' && r.type !== 'Immediate');
+
+  const col = (p, what, body, help = '') => `<div class="lcol${shown === p ? ' active' : ''}">` +
+    `<div class="phase"><span>${p}</span>${help}</div><div class="what">${what}</div>${body}</div>`;
+  const small = (ps) => `<div class="lcol small dim${ps.includes(shown) ? ' active' : ''}" ` +
+    `title="${esc(ps.map((p) => `${p}: ${PHASE_CARD[p].replace(/<[^>]+>/g, '')}`).join('\n'))}">` +
+    ps.map((p) => `<div class="phase"><span>${p}</span></div>`).join('') + '<div class="what">libuv internal</div></div>';
+
+  const pollBody = runningIn('io') + (ioSources.length
+    ? ioSources.map((r) => `<div class="item pseudo">${describeResources([r])}</div>`).join('')
+    : running.some((x) => x.queue === 'io') ? '' : '<div class="empty">no I/O pending</div>') +
+    (state.phase === 'poll' ? `<div class="what">may sleep up to ${state.timeout < 0 ? '∞' : state.timeout + ' ms'}</div>` : '');
+  const mainBody = state.mainDone ? '<div class="empty">done</div>' : '<div class="item running">▶ running</div>';
+
+  $('phases').innerHTML = '<div id="loopRow">' +
+    col('main script', 'your top-level code', mainBody, phaseHelp('main script')) +
+    col('timers', 'timer queue', runningIn('timers') + list('timers', 'no timers'), queueHelp('timers')) +
+    small(['pending', 'idle', 'prepare']) +
+    col('poll', 'I/O callbacks', pollBody, phaseHelp('poll')) +
+    col('check', 'immediate queue', runningIn('immediate') + list('immediate', 'no immediates'), queueHelp('immediate')) +
+    col('close', '\'close\' callbacks', '<div class="empty">not traced</div>', phaseHelp('close')) +
+    col('beforeExit', 'when the loop is empty', '', phaseHelp('beforeExit')) +
+    '</div><div id="loopNext">↺ after close, the loop goes back to timers while something keeps it alive</div>' +
+    (PHASE_CARD[shown] ? `<div class="card">${state.phase === 'between phases' ? `<b>Just left ${shown}.</b> ` : ''}${PHASE_CARD[shown]}` +
+      `${waitingFor(shown, state) ? `<span class="meta">Waiting for it now: ${waitingFor(shown, state)}</span>` : ''}</div>` : '');
+
+  // The band lights up while Node drains it: a nextTick/microtask runs, or a
+  // loop callback (or the main script) just returned.
+  const justReturned = e.kind === 'queue' && e.op === 'done' && (e.queue === 'timers' || e.queue === 'immediate') ||
+    e.kind === 'io' && !e.begin || e.kind === 'drain';
+  const draining = top && (top.queue === 'nextTick' || top.queue === 'microtask') || justReturned;
+  $('band').classList.toggle('active', !!draining);
+  $('bandTitle').textContent = draining ? 'Draining now: a callback (or the main script) returned to Node, so these run before the loop goes on'
+    : 'After every callback Node runs from the loop';
+  const box = (n, key, label, none) => `<div class="queue"><h3><span class="qname">${n}. ${label}${queueHelp(key)}</span>` +
+    `<span>${items(key).length}</span></h3>${runningIn(key)}${list(key, none)}</div>`;
+  $('queues').className = 'queues';
+  $('queues').innerHTML = box(1, 'nextTick', 'nextTick queue', 'empty') +
+    box(2, 'microtask', 'microtask queue', 'empty') +
+    box(3, 'rejection', 'Rejection check', 'nothing to check');
+
+  renderAlive(state);
+  $('iter').textContent = state.iteration ? `· iteration ${state.iteration}` :
+    state.phase === 'main script' ? '· not started' : '· before the first iteration';
+  $('stack').innerHTML = running.length ? [...running].reverse().map((x) =>
+    `<div class="item" title="${itemTitle(x)}">${esc(x.name)} <span class="meta">${esc(QUEUE_NAMES[x.queue] ?? x.queue)}</span></div>`).join('')
+    : '<div class="empty">nothing: back in the event loop</div>';
+  renderPaused();
+  renderPending(state);
+}
+
+function renderPending(state) {
+  const vis = (id) => $('showInternal').checked || !internalIds.has(`microtask:${id}`);
+  const any = all.some((e) => isPendingThen(e) && vis(e.id));
+  $('pendingWrap').classList.toggle('hidden', !any);
+  if (!any) return;
+  const xs = state.pending.filter((x) => vis(x.id));
+  $('pending').innerHTML = xs.length ? xs.map((x) => {
+    const then = all.findIndex((e) => e.kind === 'queue' && e.op === 'then' && e.id === x.id);
+    const name = nameOf(`microtask:${x.id}`, x.name);
+    return `<div class="item" title="${itemTitle({ ...x, site: undefined })}">⧗ ${esc(name)} <span class="meta">` +
+      `${x.line ? `line ${x.line} · ` : ''}${stepLink(then, `since step ${steps.findIndex((s) => s.idx >= then) + 1}`)}</span></div>`;
+  }).join('') : '<div class="empty">none</div>';
+}
+
+function renderPaused() {
+  $('pausedWrap').classList.toggle('hidden', !acts.size);
+  if (!acts.size) return;
+  const idx = steps[cur].idx;
+  const paused = [...acts.values()].map((a) => ({ a, p: a.enterIdx <= idx && pauseAt(a, idx) })).filter((x) => x.p);
+  $('paused').innerHTML = paused.length ? paused.map(({ a, p }) => {
+    const aw = awaitLabel(a, p.at);
+    return `<div class="item" title="${esc(aw.text)}">⏸ ${esc(a.name)} <span class="meta">line ${aw.line} · ` +
+      `${stepLink(p.awaitIdx, `since step ${steps.findIndex((s) => s.idx >= p.awaitIdx) + 1}`)}</span></div>`;
+  }).join('') : '<div class="empty">none</div>';
+}
+
+// What each phase will pick up the next time it runs.
+function waitingFor(p, state) {
+  const vis = (q, id) => $('showInternal').checked || !internalIds.has(`${q}:${id}`);
+  const count = (n, one, many) => n ? `${n} ${n > 1 ? many : one}` : '';
+  if (p === 'timers') return count(state.queues.timers.filter((x) => vis('timers', x.id)).length, 'timer', 'timers');
+  if (p === 'check') return count(state.queues.immediate.filter((x) => vis('immediate', x.id)).length, 'immediate', 'immediates');
+  if (p === 'poll' && state.alive) {
+    const n = state.alive.resources.filter((r) => r.type !== 'Timeout' && r.type !== 'Immediate')
+      .reduce((sum, r) => sum + r.count, 0);
+    return count(n, 'I/O source', 'I/O sources');
+  }
+  return '';
+}
+
+function renderAlive(state) {
+  const a = state.alive;
+  let html;
+  if (!a) {
+    html = '<div class="verdict">Not checked yet: libuv checks when the loop starts and after every iteration.</div>';
+  } else {
+    const when = a.what === 'loop-start' ? 'when the loop started'
+      : a.what === 'loop-exit' ? 'when the loop stopped' : `at the end of iteration ${a.iteration}`;
+    html = `<div class="asof"><b>libuv's last check: ${when}.</b> <span>libuv only checks what keeps the loop ` +
+      'alive when the loop starts and at the end of each iteration, so this list can include work that has already run.</span></div>';
+    const items = a.resources.map((r) => {
+      const ran = Math.min(a.ran[r.type]?.length ?? 0, r.count);
+      if (!ran) return `<li>${describeResources([r])}</li>`;
+      const note = ran === r.count ? (r.count > 1 ? 'all have run since' : 'has run since') : `${ran} of them ${ran > 1 ? 'have' : 'has'} run since`;
+      return `<li class="${ran === r.count ? 'ran' : ''}">${describeResources([r])} (${note})</li>`;
+    }).join('');
+    html += items ? `<ul>${items}</ul>` : '';
+    if (!a.alive) html += '<div class="verdict off">Nothing: the loop stops.</div>';
+    else if (!items) html += `<div class="verdict">libuv still has ${RULES.unnamedWork.replace(/\)$/, ', or a handle being closed)')}, so the loop goes on.</div>`;
+    else html += '<div class="verdict">So the loop goes on.</div>';
+  }
+  $('alive').innerHTML = html + docs('resources');
+}
+
+// Callback runs and output of the loaded trace, for comparing two runs.
+function runSummary() {
+  const runs = [];
+  all.forEach((e, idx) => {
+    if (e.kind === 'queue' && e.op === 'run' && !internalIds.has(`${e.queue}:${e.id}`))
+      runs.push({ name: nameOf(`${e.queue}:${e.id}`, String(e.id)), q: QUEUE_NAMES[e.queue] ?? e.queue, idx });
+    else if (e.kind === 'io' && e.begin && userIo.has(e))
+      runs.push({ name: e.label ?? `I/O (${e.provider})`, q: 'I/O', idx });
+  });
+  return { label: traceLabel || 'trace', runs, console: all.filter((e) => e.kind === 'console').map((e) => e.text) };
+}
+
+let baseline = null;
+try { baseline = JSON.parse(localStorage.getItem('evloop-baseline') ?? 'null'); } catch { baseline = null; }
+
+function setBaseline(b) {
+  baseline = b;
+  try {
+    if (b) localStorage.setItem('evloop-baseline', JSON.stringify(b));
+    else localStorage.removeItem('evloop-baseline');
+  } catch { /* kept for this page only */ }
+  renderCompare();
+}
+
+function renderCompare() {
+  if (!all.length) return;
+  let html = '<button data-act="base">Use this run as baseline</button>' +
+    (baseline ? '<button data-act="clear">Clear</button>' : '');
+  if (!baseline) {
+    $('compare').innerHTML = html + '<div class="verdict">Set a baseline, then run again (or edit and run) to compare ' +
+      'which callbacks ran, in what order, and what was printed.</div>';
+    return;
+  }
+  const now = runSummary();
+  const same = (a, b) => a && b && a.name === b.name && a.q === b.q;
+  const n = Math.max(baseline.runs.length, now.runs.length);
+  let first = -1;
+  for (let i = 0; i < n && first < 0; i++) if (!same(baseline.runs[i], now.runs[i])) first = i;
+  const outA = baseline.console, outB = now.console;
+  let outDiff = -1;
+  for (let i = 0; i < Math.max(outA.length, outB.length) && outDiff < 0; i++) if (outA[i] !== outB[i]) outDiff = i;
+  html += `<div class="verdict">Baseline: <b>${esc(baseline.label)}</b>${baseline.at ? ` (${esc(baseline.at)})` : ''}. ` +
+    (first < 0 ? '✓ Same callbacks in the same order' : `✗ Callbacks differ from #${first + 1}`) +
+    (outDiff < 0 ? ', same output.' : `, output differs at line ${outDiff + 1}.`) + '</div>';
+  if (outDiff >= 0) {
+    html += `<div class="verdict">Line ${outDiff + 1}: baseline <code>${esc((outA[outDiff] ?? '(nothing)').trimEnd())}</code>, ` +
+      `this run <code>${esc((outB[outDiff] ?? '(nothing)').trimEnd())}</code>.</div>`;
+  }
+  const rows = [];
+  for (let i = 0; i < Math.min(n, 200); i++) {
+    const a = baseline.runs[i], b = now.runs[i];
+    rows.push(`<tr class="${same(a, b) ? '' : 'diff'}"><td class="n">${i + 1}</td>` +
+      `<td title="${esc(a ? `${a.name} (${a.q})` : '')}">${esc(a?.name ?? '')}</td>` +
+      `<td title="${esc(b ? `${b.name} (${b.q})` : '')}">${b ? stepLink(b.idx, esc(b.name)) : ''}</td></tr>`);
+  }
+  html += `<table><tr><th class="n">#</th><th>baseline</th><th>this run</th></tr>${rows.join('')}</table>`;
+  $('compare').innerHTML = html;
+}
+
+function go(n) { cur = Math.max(0, Math.min(steps.length - 1, n)); pinnedFile = null; render(); }
+
+// From "Evaluating X", jumps to "Finished X", skipping everything nested
+// (including calls into other functions). Otherwise acts like Step.
+function stepOver() {
+  const e = all[steps[cur]?.idx];
+  if (!e || e.kind !== 'src' || e.op !== 'e') return go(cur + 1);
+  let depth = 0;
+  for (let i = cur + 1; i < steps.length; i++) {
+    const o = all[steps[i].idx];
+    if (o.kind !== 'src' || o.id !== e.id) continue;
+    if (o.op === 'e') depth++;
+    else if (o.op === 'x' && depth-- === 0) return go(i);
+  }
+  go(cur + 1);
+}
+
+function jump(pred) {
+  for (let i = cur + 1; i < steps.length; i++) if (pred(all[steps[i].idx])) return go(i);
+  go(steps.length - 1);
+}
+
+function togglePlay() {
+  if (playTimer) { clearInterval(playTimer); playTimer = null; $('play').textContent = 'Play'; return; }
+  $('play').textContent = 'Pause';
+  playTimer = setInterval(() => {
+    if (cur >= steps.length - 1) return togglePlay();
+    go(cur + 1);
+  }, +$('speed').value);
+}
+
+function load(text, label = '') {
+  all = parseTrace(text);
+  traceLabel = label;
+  if (!all.length) {
+    $('drop').innerHTML = 'No <code>node.evloop</code> events in that file. Was it recorded with ' +
+      '<code>--trace-event-categories node.evloop</code> on the instrumented build?';
+    return;
+  }
+  sources = all.filter((e) => e.kind === 'source').map((e) => {
+    const lineStarts = [0];
+    for (let i = 0; i < e.text.length; i++) if (e.text[i] === '\n') lineStarts.push(i + 1);
+    // Flat [start, end, class] triples from Node's own parse; absent in
+    // traces recorded before highlighting existed.
+    const tokens = [];
+    const flat = e.tokens ?? [];
+    for (let i = 0; i + 2 < flat.length; i += 3)
+      tokens.push([flat[i], flat[i + 1], e.tokenClasses[flat[i + 2]]]);
+    tokens.sort((a, b) => a[0] - b[0]);
+    return { file: e.file, text: e.text, base: e.base, nodes: e.nodes, lineStarts, tokens, funcs: e.funcs ?? [],
+      asyncFns: e.asyncFns ?? [] };
+  });
+  buildActivations();
+  for (const e of all) if (e.kind === 'queue' && e.op === 'enqueue') nameCallback(e);
+  nameIoCallbacks();
+  internalIds = computeInternal(all);
+  markModuleJob(all);
+  names = new Map();
+  for (const e of all)
+    if (e.kind === 'queue' && (isEnqueue(e) || e.op === 'then' || (e.op === 'run' && e.site)) &&
+        !names.has(`${e.queue}:${e.id}`))
+      names.set(`${e.queue}:${e.id}`, e.name);
+  analyze();
+  returnTo = null;
+  for (const id of ['drop']) $(id).classList.add('hidden');
+  for (const id of ['explain', 'loopBox', 'sideBox', 'timelineBox']) $(id).classList.remove('hidden');
+  setControls(true);
+  let hintDone = false;
+  try { hintDone = localStorage.getItem('evloop-hint-done') === '1'; } catch { /* show it */ }
+  $('hint').classList.toggle('hidden', hintDone);
+  steps = []; cur = 0; asked = null;
+  buildTimeline();
+  // Skip Node's bootstrap: start at the first event caused by user code.
+  rebuildSteps();
+  renderGotchas();
+  renderCompare();
+  renderExpect();
+  const firstUser = steps.findIndex((s) => { const e = all[s.idx]; return e.kind !== 'phase'; });
+  go(Math.max(0, firstUser));
+}
+
+// When served over HTTP, `?trace=traces/foo.json` preloads a trace.
+const preload = new URLSearchParams(location.search).get('trace');
+if (preload) fetch(preload).then((r) => r.text()).then((t) => load(t, preload.split('/').pop()))
+  .catch((err) => { $('drop').textContent = `Could not load ${preload}: ${err}`; });
+
+$('file').addEventListener('change', async (ev) => { const f = ev.target.files[0]; if (f) load(await f.text(), f.name); });
+document.addEventListener('dragover', (ev) => ev.preventDefault());
+document.addEventListener('drop', async (ev) => {
+  ev.preventDefault();
+  const f = ev.dataTransfer.files[0];
+  if (f) load(await f.text(), f.name);
+});
+$('first').onclick = () => go(0);
+$('back').onclick = () => go(cur - 1);
+$('step').onclick = () => go(cur + 1);
+$('play').onclick = togglePlay;
+$('nextPhase').onclick = () => jump((e) => e.kind === 'phase' && e.begin);
+$('nextRun').onclick = () => jump((e) => e.kind === 'queue' && e.op === 'run' || e.kind === 'io' && e.begin);
+$('scrub').oninput = (ev) => go(+ev.target.value);
+$('showInternal').onchange = $('showEmpty').onchange = () => { if (all.length) { buildTimeline(); rebuildSteps(); } };
+// Step size: a segmented control writes the hidden #gran input that the
+// step builder reads. Events first, so the loop's story comes before details.
+function setGran(g) {
+  $('gran').value = g;
+  for (const b of document.querySelectorAll?.('#granSeg [data-gran]') ?? []) {
+    b.classList.toggle('on', b.dataset.gran === g);
+    b.setAttribute('aria-pressed', String(b.dataset.gran === g));
+  }
+  $('stepOver').classList.toggle('hidden', g === 'events');
+  try { localStorage.setItem('evloop-gran', g); } catch { /* this page only */ }
+  if (all.length) rebuildSteps();
+}
+$('granSeg').onclick = (ev) => { const g = ev.target.closest?.('[data-gran]')?.dataset.gran; if (g) setGran(g); };
+{
+  let g = 'events';
+  try { g = localStorage.getItem('evloop-gran') ?? g; } catch { /* default */ }
+  setGran(['events', 'stmt', 'expr'].includes(g) ? g : 'events');
+}
+const setScale = (scale) => {
+  TL.scale = scale;
+  $('tlOrder').classList.toggle('on', scale === 'order');
+  $('tlReal').classList.toggle('on', scale === 'real');
+  if (all.length) { buildTimeline(); render(); }
+};
+$('tlOrder').onclick = () => setScale('order');
+$('tlReal').onclick = () => setScale('real');
+const zoom = (f) => { TL.zoom = Math.min(8, Math.max(0.25, TL.zoom * f)); if (all.length) { buildTimeline(); render(); } };
+$('tlIn').onclick = () => zoom(1.5);
+$('tlOut').onclick = () => zoom(1 / 1.5);
+$('tlInner').onclick = (ev) => {
+  const i = ev.target.closest?.('[data-i]')?.dataset.i;
+  if (i === undefined) return;
+  const n = steps.findIndex((st) => st.idx >= +i);
+  go(n < 0 ? steps.length - 1 : n);
+};
+$('loopBox').onclick = (ev) => {
+  const el = ev.target.closest?.('[data-q]');
+  if (!el) return;
+  asked = { q: el.dataset.q, id: el.dataset.id, name: el.dataset.name };
+  render();
+};
+$('waitWhy').onclick = (ev) => {
+  if (ev.target.closest?.('[data-close]')) { asked = null; render(); return; }
+  const a = ev.target.closest?.('a[data-jump-idx]');
+  if (a) { ev.preventDefault(); jumpToIdx(+a.dataset.jumpIdx); }
+};
+$('sideTabs').onclick = (ev) => {
+  const b = ev.target.closest?.('[data-tab]');
+  if (!b) return;
+  if (b.classList.contains('on')) $('sideBox').classList.toggle('collapsed');
+  else showTab(b.dataset.tab);
+};
+$('explain').addEventListener('toggle', (ev) => {
+  if (!ev.target.matches?.('details.more')) return;
+  whyOpen = ev.target.open;
+  try { localStorage.setItem('evloop-why-open', whyOpen ? '1' : '0'); } catch { /* this page only */ }
+}, true);
+$('stepOver').onclick = stepOver;
+function setLoopWide(wide) {
+  $('loopBox').classList.toggle('wide', wide);
+  $('stage').classList.toggle('wide', wide);
+  $('loopExpand').textContent = wide ? 'Compact' : 'Expand';
+  $('loopExpand').setAttribute('aria-expanded', String(wide));
+}
+$('loopExpand').onclick = (ev) => {
+  ev.stopPropagation();
+  const wide = !$('loopBox').classList.contains('wide');
+  setLoopWide(wide);
+  try { localStorage.setItem('evloop-loop-wide', wide ? '1' : '0'); } catch { /* this page only */ }
+};
+try { setLoopWide(localStorage.getItem('evloop-loop-wide') === '1'); } catch { setLoopWide(false); }
+function setTheme(t) {
+  if (document.documentElement) {
+    if (t) document.documentElement.dataset.theme = t;
+    else delete document.documentElement.dataset.theme;
+  }
+  $('theme').value = t;
+}
+$('theme').onchange = () => {
+  setTheme($('theme').value);
+  try { localStorage.setItem('evloop-theme', $('theme').value); } catch { /* this page only */ }
+};
+try { setTheme(localStorage.getItem('evloop-theme') ?? ''); } catch { setTheme(''); }
+$('hintClose').onclick = () => {
+  $('hint').classList.add('hidden');
+  try { localStorage.setItem('evloop-hint-done', '1'); } catch { /* this page only */ }
+};
+function setControls(on) {
+  for (const id of ['first', 'back', 'step', 'play', 'speed', 'nextRun', 'nextPhase', 'stepOver', 'scrub'])
+    $(id).disabled = !on;
+}
+setControls(false);
+$('predictMode').onchange = () => { if ($('predictMode').checked) showTab('next'); if (all.length) render(); };
+$('upnext').onclick = (ev) => {
+  const b = ev.target.closest?.('[data-guess]');
+  if (b && guessCtx) checkGuess(b.dataset.guess, b.textContent);
+};
+for (const id of ['explain', 'gotchas', 'actual', 'compare', 'expectBox']) {
+  $(id).onclick = (ev) => {
+    const act = ev.target.closest?.('[data-act]')?.dataset.act;
+    if (act === 'base') return setBaseline({ ...runSummary(), at: new Date().toLocaleTimeString() });
+    if (act === 'clear') return setBaseline(null);
+    const a = ev.target.closest?.('a[data-jump-idx], a[data-back]');
+    if (!a) return;
+    ev.preventDefault();
+    if (a.dataset.back) { const to = returnTo; returnTo = null; go(to); return; }
+    if (a.dataset.jumpIdx !== undefined) jumpToIdx(+a.dataset.jumpIdx);
+  };
+}
+$('tabs').onclick = (ev) => {
+  const f = ev.target.closest('[data-f]')?.dataset.f;
+  if (f === undefined) return;
+  const keep = cur;
+  go(keep);
+  pinnedFile = sources[+f];
+  render();
+};
+$('log').onclick = (ev) => { const i = ev.target.closest('[data-i]')?.dataset.i; if (i) go(+i); };
+document.addEventListener('keydown', (ev) => {
+  if (!steps.length || ev.target.tagName === 'TEXTAREA' || ev.target.tagName === 'SELECT' ||
+      ev.target.tagName === 'INPUT' && ev.target.type !== 'checkbox') return;
+  if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+  const key = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
+  if ((key === 'Enter' || key === ' ') && ev.target.matches?.('[data-q]')) { ev.preventDefault(); ev.target.click(); return; }
+  if (ev.target.tagName === 'BUTTON' && (key === ' ' || key === 'Enter')) return;
+  if (key === 'ArrowRight') go(cur + 1);
+  else if (key === 'ArrowLeft') go(cur - 1);
+  else if (key === 'Home') go(0);
+  else if (key === 'End') go(steps.length - 1);
+  else if (key === ' ') { ev.preventDefault(); togglePlay(); }
+  else if (key === 'p') $('nextPhase').click();
+  else if (key === 'r') $('nextRun').click();
+  else if (key === 'o' && $('gran').value !== 'events') stepOver();
+});
+
+// Running code needs server.js; with a plain static server the panel stays
+// hidden and the file picker / ?trace= workflow is unchanged.
+let examples = [];
+const runToken = document.querySelector?.('meta[name="evloop-token"]')?.content;
+
+function selectedExample() { return examples.find((x) => x.name === $('exampleSel').value); }
+
+function setStatus(text, isError = false) {
+  $('runStatus').textContent = text;
+  $('runStatus').classList.toggle('err', isError);
+}
+
+function showCode(show) {
+  $('runGrid').classList.toggle('hidden', !show);
+  $('codeToggle').textContent = show ? 'Hide code' : 'Edit code';
+}
+
+async function runCode() {
+  const name = $('exampleSel').value || 'scratch.js';
+  $('runBtn').disabled = true;
+  setStatus('Running…');
+  $('stderr').classList.add('hidden');
+  try {
+    const res = await fetch('/api/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-evloop-token': runToken },
+      body: JSON.stringify({ name, code: $('editor').value }),
+    });
+    const r = await res.json();
+    if (!res.ok) { setStatus(`Run refused: ${r.error}`, true); return; }
+    if (r.stderr) { $('stderr').textContent = r.stderr; $('stderr').classList.remove('hidden'); }
+    const how = r.timedOut ? `Timed out after ${Math.round(r.durationMs / 1000)} s` :
+      r.signal ? `Killed by ${r.signal}` : `exit code ${r.exitCode}`;
+    let loaded = false;
+    if (r.trace) {
+      try { load(r.trace, name); loaded = all.length > 0; } catch { /* reported below */ }
+    }
+    setStatus(`Ran in ${r.durationMs} ms, ${how}${loaded ? '' : '. No trace to show'}.`,
+              r.timedOut || r.exitCode !== 0 || !loaded);
+    // Make room for the timeline; the code is one click away.
+    if (loaded) showCode(false);
+    history.replaceState(null, '', `?example=${encodeURIComponent(name)}`);
+  } catch (err) {
+    setStatus(`Run failed: ${err.message}`, true);
+  } finally {
+    $('runBtn').disabled = false;
+  }
+}
+
+async function initRunner() {
+  if (!runToken || runToken.startsWith('__')) return;
+  try {
+    const res = await fetch('/api/examples');
+    if (!res.ok) return;
+    examples = await res.json();
+  } catch { return; }
+  const fromTrace = /([^/]+)\.json$/.exec(preload ?? '')?.[1];
+  const wanted = new URLSearchParams(location.search).get('example') ??
+    examples.find((x) => x.name.replace(/\.[cm]?js$/, '') === fromTrace)?.name;
+  $('exampleSel').innerHTML = examples.map((x) =>
+    `<option ${x.name === wanted ? 'selected' : ''}>${esc(x.name)}</option>`).join('') +
+    '<option value="scratch.js">scratch.js (empty)</option>';
+  $('editor').value = selectedExample()?.code ?? '';
+  loadExpected();
+  $('runBox').classList.remove('hidden');
+  $('drop').innerHTML = 'Pick an example, edit it if you like, and press <b>Run</b>. ' +
+    'You can also open or drop a trace file.';
+  if (!preload) runCode();
+  else showCode(false);
+}
+
+function expectedKey() { return `evloop-expected:${$('exampleSel').value}`; }
+function loadExpected() {
+  try { $('expected').value = localStorage.getItem(expectedKey()) ?? ''; } catch { $('expected').value = ''; }
+}
+$('expected').addEventListener('input', () => {
+  try { localStorage.setItem(expectedKey(), $('expected').value); } catch { /* this page only */ }
+  renderExpect();
+});
+$('exampleSel').onchange = () => { $('editor').value = selectedExample()?.code ?? ''; loadExpected(); };
+$('resetBtn').onclick = () => { $('editor').value = selectedExample()?.code ?? ''; };
+$('runBtn').onclick = runCode;
+$('codeToggle').onclick = () => showCode($('runGrid').classList.contains('hidden'));
+$('editor').addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); runCode(); return; }
+  if (ev.key === 'Tab' && !ev.shiftKey) {
+    ev.preventDefault();
+    const t = ev.target, a = t.selectionStart;
+    t.setRangeText('  ', a, t.selectionEnd, 'end');
+  }
+});
+initRunner();
+</script>
+</body>
+</html>
