@@ -24,4 +24,15 @@ export default [
       'prefer-arrow-callback': 'error',
     },
   },
+  {
+    // The viewer names callbacks after their functions, so the examples and
+    // probes keep named function expressions.
+    files: [
+      'tools/evloop-viewer/examples/**/*.{js,mjs}',
+      'tools/evloop-viewer/test/probes/**/*.{js,mjs}',
+    ],
+    rules: {
+      'prefer-arrow-callback': 'off',
+    },
+  },
 ];
