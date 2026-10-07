@@ -1,3 +1,23 @@
+> [!IMPORTANT]
+> **This is a fork of Node.js with an event loop viewer.** It replays a real
+> run step by step: loop phases, the nextTick, microtask, timer and immediate
+> queues, and the line of your code running. The work lives on the
+> `eventloop-viewer` branch, under [`tools/evloop-viewer`](tools/evloop-viewer/README.md).
+>
+> First install Node's [build prerequisites](BUILDING.md#prerequisites), then:
+>
+> ```sh
+> git clone https://github.com/npapagna/node-eventloop-viewer.git && cd node-eventloop-viewer
+> git checkout eventloop-viewer
+> ./configure --node-builtin-modules-path "$(pwd)"
+> make -j8
+> out/Release/node tools/evloop-viewer/server.js   # open http://127.0.0.1:8765/
+> ```
+>
+> The [viewer's README](tools/evloop-viewer/README.md) covers building on
+> other platforms, tracing your own scripts and what the viewer shows. The
+> rest of this page is Node's own README.
+
 # Node.js
 
 Node.js is an open-source, cross-platform JavaScript runtime environment.
