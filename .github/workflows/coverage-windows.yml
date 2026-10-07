@@ -30,6 +30,7 @@ on:
   push:
     branches:
       - main
+      - eventloop-viewer
     paths-ignore:
       - '**.md'
       - '**.nix'

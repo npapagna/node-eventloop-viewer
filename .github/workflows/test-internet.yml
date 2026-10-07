@@ -19,6 +19,7 @@ on:
       - canary
       - v[0-9]+.x-staging
       - v[0-9]+.x
+      - eventloop-viewer
     paths:
       - .github/workflows/test-internet.yml
       - test/internet/**
