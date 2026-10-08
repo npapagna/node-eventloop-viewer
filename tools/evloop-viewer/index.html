@@ -161,22 +161,32 @@
     border: 2px dashed var(--line); border-radius: 10px; }
   #drop code { font-family: var(--mono); }
   .hidden { display: none !important; }
-  #runGrid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 10px; }
-  @media (max-width: 760px) { #runGrid { grid-template-columns: 1fr; } }
-  #expectWrap { display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-md); color: var(--muted); }
-  #expected { flex: 1; min-height: 120px; resize: vertical; font-family: var(--mono); font-size: var(--fs-sm);
+  #expectWrap { display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-md); color: var(--muted);
+    margin-top: var(--sp-2); }
+  #expected { min-height: 72px; resize: vertical; font-family: var(--mono); font-size: var(--fs-sm);
     line-height: 1.6; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
     background: var(--bg); color: var(--ink); }
   #runBar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  #runCtl { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  #exampleSel { max-width: 200px; }
+  #runStatus { flex: 1 1 180px; }
   #runBtn { border-color: var(--accent); color: var(--accent); font-weight: 600; }
-  #editor { width: 100%; min-height: 140px; height: 200px; resize: vertical; font-family: var(--mono);
-    font-size: var(--fs-sm); line-height: 1.6; padding: 8px 10px; border: 1px solid var(--line);
-    border-radius: 6px; background: var(--bg); color: var(--ink); tab-size: 2; }
+  /* The editor replaces the highlighted code inside the same box. It grows
+     to fit its text so the box scrolls it together with the gutter. */
+  #editor { flex: 1; min-width: 0; resize: none; overflow-y: hidden; border: 0; outline: 0;
+    font-family: var(--mono); font-size: var(--fs-sm); line-height: 1.6; margin: 0;
+    padding: 6px 16px 6px 10px; white-space: pre; background: transparent; color: var(--ink); tab-size: 2; }
+  #sourceBox.editing #codeWrap { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  #sourceBox.editing #tabs, #sourceBox.editing #srcNote { display: none; }
+  /* While editing, the trace on screen is of the last run, not this code. */
+  main.editing #explain, main.editing #loopBox, main.editing #sideBox, main.editing #timelineBox,
+  main.editing #hint { opacity: .4; pointer-events: none; }
   #runStatus { font-size: var(--fs-md); color: var(--muted); }
   #runStatus.err { color: var(--warn); }
   #stderr { font-family: var(--mono); font-size: var(--fs-sm); white-space: pre-wrap; margin: 8px 0 0;
     color: var(--t-keyword); max-height: 180px; overflow: auto; }
   #tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
+  #tabs:empty { display: none; }
   #tabs button { font-family: var(--mono); font-size: var(--fs-sm); padding: 2px 8px; }
   #tabs button.on { border-color: var(--accent); color: var(--accent); }
   #codeWrap { display: flex; overflow: auto; border: 1px solid var(--line);
@@ -306,10 +316,7 @@
   #sideBox.collapsed [data-pane] { display: none; }
   #sideBox.collapsed #sideTabs { margin-bottom: 0; }
   [data-q], #log div[data-i], .tb[data-i] { cursor: pointer; }
-  #runBox { padding: 6px var(--sp-3); }
-  #runBar { margin-bottom: 0; }
   #runBar h2 { margin: 0; }
-  #runGrid:not(.hidden) { margin-top: var(--sp-2); }
   #loopBox:not(.wide) .lcol .phase > span:first-child { white-space: nowrap; }
   #loopBox:not(.wide) .lcol:first-child { flex-basis: 100px; }
   #loopBox:not(.wide) #band .queues { display: flex; }
@@ -366,25 +373,6 @@
   </details>
 </header>
 <main>
-  <section id="runBox" class="hidden">
-    <div id="runBar">
-      <h2>Run code</h2>
-      <select id="exampleSel" title="Example" aria-label="Example"></select>
-      <button id="runBtn" title="Run (⌘/Ctrl+Enter)">Run ▶</button>
-      <button id="resetBtn" title="Restore the selected example">Reset</button>
-      <button id="codeToggle" title="Show or hide the code editor">Hide code</button>
-      <span id="runStatus"></span>
-    </div>
-    <div id="runGrid">
-      <textarea id="editor" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Code"></textarea>
-      <div id="expectWrap">
-        <label for="expected">What do you expect it to print? <small>(optional, one line each)</small></label>
-        <textarea id="expected" spellcheck="false" autocapitalize="off" autocomplete="off"
-          placeholder="sync start&#10;sync end&#10;nextTick&#10;…"></textarea>
-      </div>
-    </div>
-    <pre id="stderr" class="hidden"></pre>
-  </section>
   <div id="hint" class="hidden" role="note">
     <span>Step with <kbd>→</kbd>. <b>Now</b> says what just happened, and <b>Why now?</b> names the Node rule
       behind it. Switch to <b>Statements</b> or <b>Expressions</b> to step through your code line by line.</span>
@@ -394,10 +382,28 @@
     then open or drop the <code>node_trace.1.log</code> file here.</div>
   <div id="stage">
     <section id="sourceBox" class="hidden">
-      <h2>Source</h2>
+      <div id="runBar">
+        <h2>Code</h2>
+        <span id="runCtl" class="hidden">
+          <select id="exampleSel" title="Example" aria-label="Example"></select>
+          <button id="editBtn" title="Edit this code, then run it again">Edit</button>
+          <button id="runBtn" title="Run (⌘/Ctrl+Enter)">Run ▶</button>
+          <button id="resetBtn" class="hidden" title="Restore the selected example">Reset</button>
+          <button id="cancelBtn" class="hidden" title="Go back to the last run (Esc)">Cancel</button>
+        </span>
+        <span id="runStatus"></span>
+      </div>
       <div id="tabs"></div>
-      <div id="codeWrap"><div id="gutter"></div><pre id="code"></pre></div>
+      <div id="codeWrap"><div id="gutter"></div><pre id="code"></pre>
+        <textarea id="editor" class="hidden" spellcheck="false" autocapitalize="off" autocomplete="off"
+          wrap="off" aria-label="Code"></textarea></div>
       <div id="srcNote"></div>
+      <pre id="stderr" class="hidden"></pre>
+      <div id="expectWrap" class="hidden">
+        <label for="expected">What do you expect it to print? <small>(optional, one line each)</small></label>
+        <textarea id="expected" spellcheck="false" autocapitalize="off" autocomplete="off"
+          placeholder="sync start&#10;sync end&#10;nextTick&#10;…"></textarea>
+      </div>
     </section>
     <section id="explain" class="hidden" aria-live="polite"></section>
     <section id="loopBox" class="hidden">
@@ -991,6 +997,7 @@ function lineOf(src, offset) {
 }
 
 function renderSource(e, state) {
+  if (editing) return;
   if (!sources.length) { $('sourceBox').classList.add('hidden'); return; }
   $('sourceBox').classList.remove('hidden');
   // A pause or resume shows the await it happened at.
@@ -2517,7 +2524,7 @@ function renderExpect() {
   const box = $('expectBox');
   if (!want.some((l) => l !== '')) {
     badge.textContent = '';
-    box.innerHTML = '<div class="verdict">Tip: type what you expect the script to print, next to the editor, and this tab ' +
+    box.innerHTML = '<div class="verdict">Tip: type what you expect the script to print, under the code, and this tab ' +
       'explains the first line where Node disagrees.</div>';
     return;
   }
@@ -3041,21 +3048,59 @@ function setStatus(text, isError = false) {
   $('runStatus').classList.toggle('err', isError);
 }
 
-function showCode(show) {
-  $('runGrid').classList.toggle('hidden', !show);
-  $('codeToggle').textContent = show ? 'Hide code' : 'Edit code';
+let editing = false;
+let ranCode = null;  // the code behind the trace on screen, restored by Cancel
+
+// Editing happens in the Source pane itself: the editor takes the place of
+// the highlighted code, and the trace around it is dimmed as stale.
+function setEditing(on) {
+  editing = on;
+  $('sourceBox').classList.toggle('editing', on);
+  document.querySelector('main').classList.toggle('editing', on && all.length > 0);
+  $('code').classList.toggle('hidden', on);
+  $('editor').classList.toggle('hidden', !on);
+  $('editBtn').classList.toggle('hidden', on);
+  $('resetBtn').classList.toggle('hidden', !on);
+  $('cancelBtn').classList.toggle('hidden', !on || ranCode === null);
+  setControls(!on && all.length > 0);
+  if (on) {
+    $('sourceBox').classList.remove('hidden');
+    fitEditor();
+    $('editor').focus();
+    setStatus('Editing. ⌘/Ctrl+Enter runs it.');
+  } else if (all.length) {
+    render();
+  }
+}
+
+// Numbers the gutter and grows the editor to its text, so the box scrolls
+// both together like the highlighted view.
+function fitEditor() {
+  const ed = $('editor');
+  const lines = ed.value.split('\n').length;
+  $('gutter').innerHTML = Array.from({ length: lines }, (_, i) => `<span>${i + 1}</span>`).join('\n');
+  ed.style.height = 'auto';
+  ed.style.height = `${ed.scrollHeight}px`;
+}
+
+function cancelEdit() {
+  if (ranCode === null) return;
+  $('editor').value = ranCode;
+  setStatus('');
+  setEditing(false);
 }
 
 async function runCode() {
   const name = $('exampleSel').value || 'scratch.js';
-  $('runBtn').disabled = true;
+  const code = $('editor').value;
+  $('runBtn').disabled = $('editBtn').disabled = true;
   setStatus('Running…');
   $('stderr').classList.add('hidden');
   try {
     const res = await fetch('/api/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-evloop-token': runToken },
-      body: JSON.stringify({ name, code: $('editor').value }),
+      body: JSON.stringify({ name, code }),
     });
     const r = await res.json();
     if (!res.ok) { setStatus(`Run refused: ${r.error}`, true); return; }
@@ -3068,13 +3113,12 @@ async function runCode() {
     }
     setStatus(`Ran in ${r.durationMs} ms, ${how}${loaded ? '' : '. No trace to show'}.`,
               r.timedOut || r.exitCode !== 0 || !loaded);
-    // Make room for the timeline; the code is one click away.
-    if (loaded) showCode(false);
+    if (loaded) { ranCode = code; setEditing(false); }
     history.replaceState(null, '', `?example=${encodeURIComponent(name)}`);
   } catch (err) {
     setStatus(`Run failed: ${err.message}`, true);
   } finally {
-    $('runBtn').disabled = false;
+    $('runBtn').disabled = $('editBtn').disabled = false;
   }
 }
 
@@ -3093,11 +3137,13 @@ async function initRunner() {
     '<option value="scratch.js">scratch.js (empty)</option>';
   $('editor').value = selectedExample()?.code ?? '';
   loadExpected();
-  $('runBox').classList.remove('hidden');
+  $('runCtl').classList.remove('hidden');
+  $('expectWrap').classList.remove('hidden');
   $('drop').innerHTML = 'Pick an example, edit it if you like, and press <b>Run</b>. ' +
     'You can also open or drop a trace file.';
-  if (!preload) runCode();
-  else showCode(false);
+  if (preload) { ranCode = $('editor').value; return; }
+  setEditing(true);
+  runCode();
 }
 
 function expectedKey() { return `evloop-expected:${$('exampleSel').value}`; }
@@ -3108,12 +3154,22 @@ $('expected').addEventListener('input', () => {
   try { localStorage.setItem(expectedKey(), $('expected').value); } catch { /* this page only */ }
   renderExpect();
 });
-$('exampleSel').onchange = () => { $('editor').value = selectedExample()?.code ?? ''; loadExpected(); };
-$('resetBtn').onclick = () => { $('editor').value = selectedExample()?.code ?? ''; };
+// Picking an example shows its trace right away; an empty scratch file has
+// nothing to trace yet, so it opens for editing.
+$('exampleSel').onchange = () => {
+  $('editor').value = selectedExample()?.code ?? '';
+  loadExpected();
+  if (selectedExample()) runCode();
+  else setEditing(true);
+};
+$('resetBtn').onclick = () => { $('editor').value = selectedExample()?.code ?? ''; fitEditor(); };
 $('runBtn').onclick = runCode;
-$('codeToggle').onclick = () => showCode($('runGrid').classList.contains('hidden'));
+$('editBtn').onclick = () => setEditing(true);
+$('cancelBtn').onclick = cancelEdit;
+$('editor').addEventListener('input', fitEditor);
 $('editor').addEventListener('keydown', (ev) => {
   if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); runCode(); return; }
+  if (ev.key === 'Escape') { ev.preventDefault(); cancelEdit(); return; }
   if (ev.key === 'Tab' && !ev.shiftKey) {
     ev.preventDefault();
     const t = ev.target, a = t.selectionStart;
