@@ -70,6 +70,9 @@ Pick the step size in the header. **Events** (the default) steps through what
 the loop does: phases, callbacks queued and run, output. **Statements** and
 **Expressions** also step through your code. The View menu has predict mode,
 Node.js internals, empty phases, the theme (system, light or dark) and the keys.
+Node's own callbacks stay hidden unless they run your code: a stream's
+`resume_` nextTick that calls your `'data'` listener shows up, named after
+your listener and marked "via Node".
 
 * **Timeline**: lanes for loop phases, callbacks, nextTicks and microtasks,
   and output, plus a bar for each callback while it waits in its queue. Each

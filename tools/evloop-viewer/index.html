@@ -147,6 +147,7 @@
     text-overflow: ellipsis; white-space: nowrap; }
   .item.fresh { outline: 2px solid var(--c); }
   .item .meta { color: var(--muted); }
+  #loopGrid .item .meta { display: block; overflow: hidden; text-overflow: ellipsis; }
   .empty { color: var(--muted); font-size: var(--fs-sm); font-style: italic; }
   #stack .item { --c: var(--run); background: var(--run-soft); }
   #stackWrap { margin-top: 12px; }
@@ -797,7 +798,7 @@ function apply(state, e) {
       }
       if (e.op === 'enqueue') {
         const item = { id: e.id, name: e.name, code: e.code, line: e.line, site: e.site, delay: e.delay, due: e.due, job: e.job,
-          phase: state.phase, seq: state.phaseSeq, unref: e.unref };
+          phase: state.phase, seq: state.phaseSeq, unref: e.unref, viaNode: e.viaNode };
         // refresh() re-queues a timer that is still pending.
         if (at >= 0) q.splice(at, 1);
         q.push(item);
@@ -810,7 +811,8 @@ function apply(state, e) {
         // A user callback running means the main script itself has returned.
         // Node's own jobs run earlier too: they load an ES module.
         if (!internalIds.has(`${e.queue}:${e.id}`) && !e.moduleBody) state.mainDone = true;
-        const item = at >= 0 ? q.splice(at, 1)[0] : { id: e.id, name: e.name ?? '?' };
+        const item = at >= 0 ? q.splice(at, 1)[0]
+          : { id: e.id, name: e.name ?? '?', code: e.code, line: e.line, viaNode: e.viaNode };
         state.alive?.ran[ALIVE_TYPE[e.queue]]?.push(e.id);
         state.running.push({ queue: e.queue, ...item });
       } else if (e.op === 'done') {
@@ -925,6 +927,11 @@ function describe(e, state) {
         return `${name} is now <b>added to the microtask queue</b>: the promise it was waiting on was just ` +
           `<b>${e.outcome}</b>${by}.`;
       }
+      if (e.op === 'enqueue' && e.viaNode) {
+        const does = NODE_CALLBACKS[e.viaNode];
+        return `Node added its own callback${viaNodeName(e)} to the <b>${what}</b> queue${does ? `: ${does}` : ''}. ` +
+          `It calls your ${name}, so the queue shows it under that name.`;
+      }
       if (e.op === 'enqueue') {
         let extra = '';
         if (e.queue === 'timers' && e.rearm) return `${name} re-armed by <b>setInterval</b>, due in ${e.delay} ms.`;
@@ -937,6 +944,10 @@ function describe(e, state) {
       const runningItem = state.running.findLast((x) => x.queue === e.queue && x.id === e.id);
       const known = runningItem?.name ?? names.get(`${e.queue}:${e.id}`);
       const label = `<code>${esc(known && known !== '<anonymous>' ? known : e.id)}</code>`;
+      if (e.op === 'run' && e.viaNode) {
+        const does = NODE_CALLBACKS[e.viaNode];
+        return `Running ${what} callback ${label}, called by Node's own callback${viaNodeName(e)}${does ? `: ${does}` : ''}.`;
+      }
       if (e.op === 'run') return `Running ${what} callback ${label}.`;
       if (e.op === 'done') return `${what} callback ${label} finished.`;
       if (e.op === 'cancel') return `${what} ${label} cancelled.`;
@@ -1090,6 +1101,18 @@ const PHASE_WHY = {
   prepare: 'internal: runs right before poll. Node uses it to track idle time. No JavaScript runs here.',
   check: 'runs <code>setImmediate</code> callbacks. It comes right after poll, so an immediate queued from an I/O callback always runs before any timer.',
   close: 'runs <code>\'close\'</code> callbacks, such as after <code>socket.destroy()</code>.',
+};
+
+// What Node's own lib/ callbacks are doing when they call user code, keyed
+// by their function name. These are lib/ internals: a rename in a newer
+// Node drops the description and the raw name shows instead.
+const NODE_CALLBACKS = {
+  emitListeningNT: 'the server started listening, so Node emits <code>\'listening\'</code>',
+  resume_: 'a readable stream started flowing (for example because a <code>\'data\'</code> listener or ' +
+    '<code>pipe()</code> was added), so Node reads from it and emits <code>\'data\'</code>',
+  endReadableNT: 'a readable stream has no more data, so Node emits <code>\'end\'</code>',
+  emitErrorCloseNT: 'a stream or socket failed, so Node emits <code>\'error\'</code> and then <code>\'close\'</code>',
+  emitCloseNT: 'a server or stream closed, so Node emits <code>\'close\'</code>',
 };
 
 const PROVIDERS = {
@@ -1292,6 +1315,20 @@ function funcAround(src, offset) {
   return best;
 }
 
+// The user function a `src` event runs in, as { label, code, line }, or null
+// for top-level code.
+function userFuncOf(e) {
+  const src = sources.find((x) => e.id >= x.base && e.id < x.base + x.nodes.length);
+  const f = src && funcAround(src, src.nodes[e.id - src.base][1]);
+  if (!f) return null;
+  const code = src.text.slice(f[0], f[1]);
+  // A method's range starts at its parameters: `write(chunk) {` is
+  // `(chunk) {`, so its name comes from the text before it.
+  const method = /^\([^)]*\)\s*\{/.test(code) && /(?:^|[{,;\s])([\w$]+)\s*$/.exec(src.text.slice(Math.max(0, f[0] - 64), f[0]))?.[1];
+  const label = method && !/^(?:function|return|await|yield|typeof|void|async)$/.test(method) ? method : funcLabel(code);
+  return { label, code, line: lineOf(src, f[0]) };
+}
+
 // I/O callbacks carry only libuv's provider (FSREQCALLBACK). Name each after
 // the user function whose first statement runs inside it, if any.
 function nameIoCallbacks() {
@@ -1300,13 +1337,49 @@ function nameIoCallbacks() {
     if (e.kind === 'io') {
       if (e.begin) open.push(e); else open.pop();
     } else if (e.kind === 'src' && open.length && open.at(-1).label === undefined) {
-      const io = open.at(-1);
-      const src = sources.find((x) => e.id >= x.base && e.id < x.base + x.nodes.length);
-      const f = src && funcAround(src, src.nodes[e.id - src.base][1]);
-      io.label = f ? funcLabel(src.text.slice(f[0], f[1])) : null;
+      open.at(-1).label = userFuncOf(e)?.label ?? null;
     }
   }
 }
+
+// Node queues some callbacks of its own that call user code: a stream's
+// resume_ nextTick emits 'data', AbortSignal.timeout's timer fires 'abort'.
+// Hidden, they leave the user's listener with no visible cause, so show
+// them, named after the first user function they run. Microtasks stay
+// hidden: Node's ES module loader runs top-level code in its own ones.
+const SHOWN_NODE_QUEUES = new Set(['nextTick', 'timers', 'immediate']);
+function showNodeCallbacks(events) {
+  const open = [];
+  const done = new Set();
+  for (const e of events) {
+    if (e.kind === 'io') {
+      if (e.begin) open.push(null); else open.pop();
+    } else if (e.kind === 'queue' && e.op === 'run') {
+      open.push(`${e.queue}:${e.id}`);
+    } else if (e.kind === 'queue' && e.op === 'done') {
+      const at = open.lastIndexOf(`${e.queue}:${e.id}`);
+      if (at >= 0) open.splice(at, 1);
+    } else if (e.kind === 'src') {
+      const key = open.at(-1);
+      if (!key || done.has(key) || !internalIds.has(key) || !SHOWN_NODE_QUEUES.has(key.split(':')[0])) continue;
+      done.add(key);
+      const fn = userFuncOf(e);
+      if (!fn) continue;
+      internalIds.delete(key);
+      const [queue, id] = key.split(':');
+      const own = events.find((o) => o.kind === 'queue' && o.queue === queue && String(o.id) === id && o.name)?.name;
+      for (const o of events) {
+        if (o.kind !== 'queue' || o.queue !== queue || String(o.id) !== id) continue;
+        Object.assign(o, { name: fn.label, code: fn.code, line: fn.line, viaNode: own ?? '<anonymous>' });
+      }
+    }
+  }
+}
+
+// The Node callback that runs user code, as " <code>resume_</code>" (empty
+// when anonymous), plus what it does when NODE_CALLBACKS knows.
+const viaNodeName = (x) => (x.viaNode && x.viaNode !== '<anonymous>' ? ` <code>${esc(x.viaNode)}</code>` : '');
+const VIA_NODE_API = { nextTick: 'process.nextTick', timers: 'setTimeout', immediate: 'setImmediate' };
 
 // Promise hooks don't expose a reaction's handler. When exactly one
 // function starts on the line that called .then/.catch/.finally, that is
@@ -1983,6 +2056,10 @@ function ruleFor(e, idx, state) {
   if (e.kind === 'queue' && e.op === 'then')
     return 'A promise calls its callbacks only once it settles. Attaching one to a pending promise just registers it ' +
       'on that promise: nothing is queued until the promise is resolved or rejected.';
+  if (e.kind === 'queue' && e.op === 'enqueue' && e.viaNode)
+    return `Your code did not call <code>${VIA_NODE_API[e.queue]}</code> here: Node's own code did, to call your ` +
+      'listener or callback later. The viewer hides callbacks Node queues for itself, but shows this one because ' +
+      'your code runs inside it, so you can see why your code runs when it does.';
   if (e.kind === 'queue' && e.op === 'enqueue' && isUserReaction(e)) {
     if (e.cause === 'then')
       return 'Promise callbacks never run synchronously. Even when the promise has already settled, the callback is ' +
@@ -2655,7 +2732,9 @@ function itemTitle(x) {
   const code = x.code ? dedent(x.code) : '';
   const m = /^(\S+) .*\/([^/]+:\d+):\d+$/.exec(x.site ?? '');
   const site = m ? `Queued ${m[1] === '<anonymous>' ? '' : `in ${m[1]}, `}at ${m[2]}` : x.site ?? '';
-  return esc([code, site].filter(Boolean).join('\n\n'));
+  const node = x.viaNode ? `Queued by Node itself${x.viaNode === '<anonymous>' ? '' : ` (${x.viaNode})`}, not by your ` +
+    'code. Node\'s callback calls this function.' : '';
+  return esc([code, site, node].filter(Boolean).join('\n\n'));
 }
 
 // Removes the indentation shared by a function's lines after the first,
@@ -2671,7 +2750,8 @@ function itemHtml(key, x, state) {
   const line = x.line ? `line ${x.line}` : '';
   const extra = key === 'timers' ? `+${x.delay}ms${x.unref ? ' unref\'d' : ''}` :
     key === 'microtask' && x.job !== 'queueMicrotask' ? esc(x.job) : '';
-  const meta = line || extra ? ` <span class="meta">${[line, extra].filter(Boolean).join(' · ')}</span>` : '';
+  const via = x.viaNode ? 'via Node' : '';
+  const meta = line || extra || via ? ` <span class="meta">${[line, extra, via].filter(Boolean).join(' · ')}</span>` : '';
   const isAsked = asked && asked.q === key && asked.id === String(x.id);
   return `<div class="item ${state.fresh === key + ':' + x.id ? 'fresh' : ''}${isAsked ? ' asked' : ''}" style="--c:${color}" ` +
     `title="${itemTitle(x)}" tabindex="0" role="button" data-q="${key}" data-id="${esc(String(x.id))}" data-name="${esc(x.name)}">` +
@@ -2923,6 +3003,7 @@ function load(text, label = '') {
   nameIoCallbacks();
   internalIds = computeInternal(all);
   markModuleJob(all);
+  showNodeCallbacks(all);
   names = new Map();
   for (const e of all)
     if (e.kind === 'queue' && (isEnqueue(e) || e.op === 'then' || (e.op === 'run' && e.site)) &&

@@ -284,6 +284,22 @@ r = render('18-thread-pool');
       '18 hash explained as thread pool work');
 }
 
+// Node's own nextTicks that call user listeners show up, named after the
+// listener, and both run before a promise job queued earlier.
+r = render('19-stream-events');
+{
+  const runOf = (re) => r.out.findIndex((s) => re.test(s.explain) && /^Running/.test(s.explain));
+  const data = runOf(/callback onData , called by Node's own callback resume_ : a readable stream started flowing/);
+  const end = runOf(/callback onEnd , called by Node's own callback endReadableNT : a readable stream has no more data/);
+  const promise = runOf(/microtask callback afterPromise/);
+  assert(data >= 0 && end > data && promise > end, `19 data, then end, then the promise job: ${data} ${end} ${promise}`);
+  has(r, (e) => e.kind === 'queue' && e.op === 'enqueue' && e.queue === 'nextTick',
+      /Node added its own callback resume_ .*Why now\? Your code did not call process\.nextTick here/,
+      '19 says Node queued the nextTick, not the user');
+  assert(r.out.filter((s) => s.e.kind === 'console').map((s) => s.e.text.trim()).join('|') ===
+         'listeners attached|data a|end|promise job', '19 output order');
+}
+
 // Drains name the callback whose return triggered them, not "a callback".
 r = render('02-inside-io', 'events', { showInternal: true });
 has(r, (e) => e.kind === 'drain' && e.what === 'ticks', /The I\/O callback onRead finished\. Before the loop goes on/,
