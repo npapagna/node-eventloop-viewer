@@ -1952,6 +1952,12 @@ function ruleFor(e, idx, state) {
   if (e.kind === 'phase' && e.begin && PHASE_WHY[e.phase]) return `The <b>${e.phase}</b> phase ${PHASE_WHY[e.phase]}`;
   if (e.kind === 'io' && e.begin) {
     const what = PROVIDERS[e.provider] ?? esc(e.provider);
+    if (state.phase === 'pending')
+      return `Pending phase: libuv deferred the callback for ${what} to this phase instead of calling it right away, ` +
+        'so Node calls its JavaScript callback now.';
+    if (state.phase === 'close')
+      return `Close phase: libuv finished closing ${what} and runs the callbacks of closed handles here, ` +
+        'so Node calls its JavaScript callback now.';
     return `Poll phase: libuv reported that ${what} completed, so Node calls its JavaScript callback now.` +
       (PROVIDER_WHERE[e.provider] ? ` ${PROVIDER_WHERE[e.provider]}` : '');
   }
