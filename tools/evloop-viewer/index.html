@@ -414,13 +414,13 @@
         <div>
           <div id="phases"></div>
           <div id="band">
-            <div class="bandHead"><span id="bandTitle">After every callback Node runs from the loop</span>
+            <div class="bandHead"><span id="bandTitle">Runs each time a callback Node called finishes</span>
               <span class="help" tabindex="0" aria-label="Which callbacks count?">?<span class="tip" role="tooltip">
                 <b>Counts:</b> each timer, immediate, I/O and <code>'close'</code> callback Node calls from the loop, and
-                the main script. Node drains these queues when that call returns to it (between timers and between
-                immediates, it drains explicitly).<br><b>Does not count:</b> functions you call yourself, such as a
+                the main script. Node drains these queues each time that call finishes (between timers and between
+                immediates, Node's own timer code drains them).<br><b>Does not count:</b> functions you call yourself, such as a
                 <code>forEach</code> callback or a listener called by <code>emit()</code>. They run inside the current
-                callback, so the drain waits for that outer callback to return.
+                callback, so the drain waits for that outer callback to finish.
                 <span class="docs">Docs: <a href="https://nodejs.org/en/learn/asynchronous-work/event-loop-timers-and-nexttick" target="_blank" rel="noopener">Event loop guide</a></span>
               </span></span></div>
             <div id="queues"></div>
@@ -549,6 +549,7 @@ let names = new Map();   // "queue:id" -> callback name from its enqueue event
 let sources = [];        // instrumented files: { file, text, base, nodes, lineStarts }
 let pinnedFile = null;   // a tab the user picked; cleared on the next step
 let info = [];           // per-event context from analyze(), indexed like `all`
+let drainedFor = [];     // per event: the loop callback (or main script) whose return Node drains for
 let notes = new Map();   // event index -> [{ level: 'warn' | 'info', html, more }]
 let gotchas = [];        // { title, html, idx } found in this run
 let enqueueAt = new Map(); // "queue:id" -> index of its enqueue event
@@ -1335,6 +1336,28 @@ function nameReaction(e) {
   e.name = funcLabel(e.code);
 }
 
+// The callback Node called from the loop (or the main script) whose return
+// makes Node drain nextTicks and microtasks, as { kind, name }; null for a
+// callback inside Node (hidden, or one the trace has no event for).
+function drainOwner(state, last, visibleKey) {
+  const r = state.running.find((x) => x.queue === 'io' || x.queue === 'timers' || x.queue === 'immediate');
+  if (r?.queue === 'io') return { kind: 'io', name: r.label };
+  if (r) return visibleKey(`${r.queue}:${r.id}`) ? { kind: 'cb', name: r.name } : null;
+  if (state.phase === 'main script') return { kind: 'main' };
+  if (state.phase === 'beforeExit') return { kind: 'beforeExit' };
+  return last;
+}
+
+function ownerHtml(o) {
+  if (!o) return 'a callback inside Node';
+  if (o.kind === 'main') return 'the main script';
+  if (o.kind === 'beforeExit') return 'the <code>\'beforeExit\'</code> event';
+  if (o.kind === 'io') return o.name ? `the I/O callback <code>${esc(o.name)}</code>` : 'the I/O callback';
+  return `<code>${esc(o.name)}</code>`;
+}
+
+const capFirst = (s) => s.replace(/^[a-z]/, (c) => c.toUpperCase());
+
 function ioName(e) {
   return e.label ? `I/O callback ${e.label}` : `I/O callback (${e.provider})`;
 }
@@ -1511,11 +1534,12 @@ function analyzeActivations(gotcha) {
 // One pass over the trace, replaying state, to record the context of every
 // event and detect gotchas.
 function analyze() {
-  info = []; notes = new Map(); gotchas = []; enqueueAt = new Map();
+  info = []; drainedFor = []; notes = new Map(); gotchas = []; enqueueAt = new Map();
   const state = emptyState();
   const runAt = new Map();
   let lastDone = null;
   let lastMacro = null;   // last timer/immediate that finished in this phase
+  let lastOwner = null;   // last loop callback seen running in this phase
   let lastBlock = null;
   let firstUserTs = null;
   let mainChecked = false;
@@ -1581,7 +1605,10 @@ function analyze() {
         (e.kind === 'queue' && e.op === 'run' && (e.queue === 'timers' || e.queue === 'immediate')))
       endBurst(idx);
 
-    if (e.kind === 'phase' && e.begin) { lastDone = null; lastMacro = null; }
+    if (e.kind === 'phase' && e.begin) { lastDone = null; lastMacro = null; lastOwner = null; }
+    const owner = drainOwner(state, lastOwner, visibleKey);
+    if (owner?.kind === 'io' || owner?.kind === 'cb') lastOwner = owner;
+    drainedFor[idx] = owner;
     // In an ES module the top-level code is itself a microtask, which flips
     // the usual nextTick-before-promises order for work it queues.
     if (e.kind === 'queue' && e.op === 'enqueue' && e.queue === 'nextTick' && !e.internal &&
@@ -1930,8 +1957,10 @@ function ruleFor(e, idx, state) {
   }
   if (e.kind === 'drain')
     return e.what === 'ticks'
-      ? 'A callback Node called from the loop (or the main script) just returned to Node. Before the loop goes on, Node empties the nextTick queue, then the microtask queue, and repeats until both are empty.'
-      : 'A callback Node called from the loop (or the main script) just returned, and no nextTick is pending, so Node asks V8 to run all queued microtasks.';
+      ? `${capFirst(ownerHtml(drainedFor[idx]))} finished. Before the loop goes on, Node empties the nextTick queue, then the ` +
+        'microtask queue, until both are empty. Only a function Node called itself counts: functions you call from it, ' +
+        'and <code>emit()</code> listeners, don\'t.'
+      : `${capFirst(ownerHtml(drainedFor[idx]))} finished and no nextTick is pending, so Node asks V8 to run all queued microtasks.`;
   if (e.kind === 'act') {
     if (e.op === 'enter') return 'Calling an async function runs its body right away, synchronously, up to its first <code>await</code>.';
     if (e.op === 'exit') return 'The call returned (or threw). That settles the promise it returned, and code awaiting that promise continues in a later microtask.';
@@ -1959,7 +1988,7 @@ function ruleFor(e, idx, state) {
   if (e.kind !== 'queue' || e.op !== 'run') return '';
   const prev = i.pausedAt && !i.prevDone
     ? `The code paused at <code>${esc(i.pausedAt.text)}</code> (line ${i.pausedAt.line}) and handed control back`
-    : i.inIo ? "The I/O callback's JavaScript just returned (Node drains these queues before leaving the callback)" :
+    : i.inIo ? `${capFirst(ownerHtml(drainedFor[idx]))} just finished (Node drains these queues before leaving the callback)` :
     i.prevDone?.name === MODULE_JOB_NAME ? 'Your module\'s top-level code just finished' :
     i.prevDone ? `<code>${esc(i.prevDone.name)}</code> just finished` :
     i.phase === 'main script' ? 'The main script just finished' : 'The previous callback just finished';
@@ -2038,6 +2067,14 @@ function causeLink(e, idx) {
   return `<div class="cause">Queued at ${stepLink(enq, label)}${where}.</div>`;
 }
 
+// When a queued nextTick gets its turn, given what is running now.
+function tickWhen(state) {
+  const o = drainOwner(state, null, (k) => $('showInternal').checked || !internalIds.has(k));
+  if (!o) return state.running.length ? 'once the running callback finishes' : 'before any microtask';
+  const name = o.kind === 'main' ? 'the main script' : o.kind === 'beforeExit' ? "the 'beforeExit' event" : o.kind === 'io' ? `the I/O callback${o.name ? ` ${o.name}` : ''}` : o.name;
+  return `once ${name} finishes`;
+}
+
 // What Node will run next, following its rules, given the queues right now.
 function predict(state) {
   const vis = (q, id) => $('showInternal').checked || !internalIds.has(`${q}:${id}`);
@@ -2045,7 +2082,7 @@ function predict(state) {
   const add = (q, x, why) => out.push({ key: `${q}:${x.id}`, name: x.name, q, why });
   const ticks = () => { for (const x of state.queues.nextTick) if (vis('nextTick', x.id))
     add('nextTick', x, state.inMicrotasks ? 'nextTick queue: once V8 has emptied the microtask queue'
-      : 'nextTick queue: first, once the running callback returns to Node'); };
+      : `nextTick queue: first, ${tickWhen(state)}`); };
   const micro = () => { for (const x of state.queues.microtask) if (vis('microtask', x.id))
     add('microtask', x, state.inMicrotasks ? 'microtask queue: V8 is draining it now and empties it before any nextTick'
       : 'microtask queue: after the nextTick queue is empty'); };
@@ -2452,7 +2489,7 @@ function waitingWhy(state, q, id) {
   const plural = (k, one, many) => `${k} ${k === 1 ? one : many}`;
   switch (q) {
     case 'nextTick':
-      return `${busy}${name} runs once the callback Node is running returns to it` +
+      return `${busy}${name} runs ${esc(tickWhen(state))}` +
         (ahead ? `, after ${plural(ahead, 'nextTick callback', 'nextTick callbacks')} queued before it` : '') +
         '. nextTicks run before any promise job, timer, I/O callback or immediate.';
     case 'microtask': {
@@ -2680,8 +2717,8 @@ function renderLoop(e, state) {
     e.kind === 'io' && !e.begin || e.kind === 'drain';
   const draining = top && (top.queue === 'nextTick' || top.queue === 'microtask') || justReturned;
   $('band').classList.toggle('active', !!draining);
-  $('bandTitle').textContent = draining ? 'Draining now: a callback (or the main script) returned to Node, so these run before the loop goes on'
-    : 'After every callback Node runs from the loop';
+  $('bandTitle').innerHTML = draining ? `Draining now: ${ownerHtml(drainedFor[steps[cur].idx])} finished, so these run before the loop goes on`
+    : 'Runs each time a callback Node called finishes';
   const box = (n, key, label, none) => `<div class="queue"><h3><span class="qname">${n}. ${label}${queueHelp(key)}</span>` +
     `<span>${items(key).length}</span></h3>${runningIn(key)}${list(key, none)}</div>`;
   $('queues').className = 'queues';

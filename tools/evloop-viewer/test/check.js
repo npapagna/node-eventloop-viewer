@@ -284,4 +284,14 @@ r = render('18-thread-pool');
       '18 hash explained as thread pool work');
 }
 
+// Drains name the callback whose return triggered them, not "a callback".
+r = render('02-inside-io', 'events', { showInternal: true });
+has(r, (e) => e.kind === 'drain' && e.what === 'ticks', /The I\/O callback onRead finished\. Before the loop goes on/,
+    '02 drain names the I/O callback');
+has(r, (e) => e.kind === 'drain', /The main script finished/, '02 drain names the main script');
+render('02-inside-io', 'events', { showInternal: false });
+has(render('02-inside-io'), run('nextTick'), /The I\/O callback onRead just finished/, '02 nextTick names the I/O callback');
+assert(render('04-nested').out.some((s) => /nextTick queue: first, once first finishes/.test(s.upnext)),
+       '04 Up next says which callback the nextTick waits for');
+
 console.log('all explanation checks passed');
