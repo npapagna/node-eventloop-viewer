@@ -529,8 +529,7 @@ const PHASE_HELP = {
     ['pollPhase', 'libuv']],
   close: ['Runs <code>\'close\'</code> event callbacks for handles closed abruptly. Example: after ' +
     '<code>socket.destroy()</code>, the socket\'s <code>\'close\'</code> listener runs here. A handle closed ' +
-    'normally emits <code>\'close\'</code> via <code>process.nextTick()</code> instead. ' +
-    '<b>Not traced yet:</b> callbacks in this phase do not show up in the trace.', ['closePhase', 'socketDestroy']],
+    'normally emits <code>\'close\'</code> via <code>process.nextTick()</code> instead.', ['closePhase', 'socketDestroy']],
   beforeExit: ['When nothing keeps the loop alive, Node emits <code>\'beforeExit\'</code>. A listener that ' +
     'queues new work (a timer, I/O) starts the loop again; otherwise the process exits.', ['beforeExit']],
 };
@@ -2699,9 +2698,11 @@ function renderLoop(e, state) {
     `title="${esc(ps.map((p) => `${p}: ${PHASE_CARD[p].replace(/<[^>]+>/g, '')}`).join('\n'))}">` +
     ps.map((p) => `<div class="phase"><span>${p}</span></div>`).join('') + '<div class="what">libuv internal</div></div>';
 
-  const pollBody = runningIn('io') + (ioSources.length
+  // An I/O callback shows in the close column while the close phase runs it.
+  const closing = state.phase === 'close' ? runningIn('io') : '';
+  const pollBody = (closing ? '' : runningIn('io')) + (ioSources.length
     ? ioSources.map((r) => `<div class="item pseudo">${describeResources([r])}</div>`).join('')
-    : running.some((x) => x.queue === 'io') ? '' : '<div class="empty">no I/O pending</div>') +
+    : running.some((x) => x.queue === 'io') && !closing ? '' : '<div class="empty">no I/O pending</div>') +
     (state.phase === 'poll' ? `<div class="what">may sleep up to ${state.timeout < 0 ? '∞' : state.timeout + ' ms'}</div>` : '');
   const mainBody = state.mainDone ? '<div class="empty">done</div>' : '<div class="item running">▶ running</div>';
 
@@ -2711,7 +2712,7 @@ function renderLoop(e, state) {
     small(['pending', 'idle', 'prepare']) +
     col('poll', 'I/O callbacks', pollBody, phaseHelp('poll')) +
     col('check', 'immediate queue', runningIn('immediate') + list('immediate', 'no immediates'), queueHelp('immediate')) +
-    col('close', '\'close\' callbacks', '<div class="empty">not traced</div>', phaseHelp('close')) +
+    col('close', '\'close\' callbacks', closing || '<div class="empty">nothing closing</div>', phaseHelp('close')) +
     col('beforeExit', 'when the loop is empty', '', phaseHelp('beforeExit')) +
     '</div><div id="loopNext">↺ after close, the loop goes back to timers while something keeps it alive</div>' +
     (PHASE_CARD[shown] ? `<div class="card">${state.phase === 'between phases' ? `<b>Just left ${shown}.</b> ` : ''}${PHASE_CARD[shown]}` +
