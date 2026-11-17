@@ -267,4 +267,21 @@ r = render('16-then-pending-vs-settled');
          `16 run names the settle as its cause: ${runB.explain}`);
 }
 
+// A busy thread pool delays work queued behind it, but not the loop: the
+// timer runs first, the file read waits for a hash to free a thread, and
+// the fifth hash finishes last.
+r = render('18-thread-pool');
+{
+  const io = r.out.filter((s) => s.e.kind === 'io' && s.e.begin);
+  const timer = r.out.findIndex((s) => run('timers')(s.e));
+  const firstHash = r.out.findIndex((s) => s.e.kind === 'io' && s.e.begin && s.e.provider === 'PBKDF2REQUEST');
+  const read = io.findIndex((s) => /onRead/.test(s.explain));
+  assert(timer >= 0 && timer < firstHash, `18 the timer runs before any hash: ${timer} ${firstHash}`);
+  assert(read > 0 && io.slice(0, read).every((s) => s.e.provider === 'PBKDF2REQUEST'),
+         '18 the file read waits for a hash');
+  assert(io.at(-1).e.provider === 'PBKDF2REQUEST', '18 the fifth hash finishes last');
+  has(r, (e) => e.kind === 'io' && e.begin && e.provider === 'PBKDF2REQUEST', /crypto\.pbkdf2.*thread pool/,
+      '18 hash explained as thread pool work');
+}
+
 console.log('all explanation checks passed');

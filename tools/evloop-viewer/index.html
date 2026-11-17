@@ -1093,14 +1093,31 @@ const PHASE_WHY = {
 };
 
 const PROVIDERS = {
-  FSREQCALLBACK: 'an <code>fs</code> operation, done on libuv\'s thread pool (4 threads by default)',
-  FSREQPROMISE: 'an <code>fs/promises</code> operation, done on libuv\'s thread pool',
-  GETADDRINFOREQWRAP: 'a DNS lookup (<code>dns.lookup</code>), done on libuv\'s thread pool',
+  FSREQCALLBACK: 'an <code>fs</code> operation',
+  FSREQPROMISE: 'an <code>fs/promises</code> operation',
+  GETADDRINFOREQWRAP: 'a DNS lookup (<code>dns.lookup</code>)',
   TCPWRAP: 'a TCP socket or server', TCPCONNECTWRAP: 'a TCP connection being opened',
   PIPEWRAP: 'a pipe (for example stdout/stdin to another process)', TTYWRAP: 'the terminal',
   WRITEWRAP: 'a stream write finishing', SHUTDOWNWRAP: 'a stream shutdown',
-  PROCESSWRAP: 'a child process', UDPWRAP: 'a UDP socket', ZLIB: 'zlib (de)compression on the thread pool',
+  PROCESSWRAP: 'a child process', UDPWRAP: 'a UDP socket', ZLIB: 'zlib (de)compression',
   SIGNALWRAP: 'an OS signal', STATWATCHER: 'a file watcher (fs.watchFile)', FSEVENTWRAP: 'a file watcher (fs.watch)',
+  TCPSERVERWRAP: 'a TCP server (a new connection arrived)',
+  HTTPINCOMINGMESSAGE: 'data on an HTTP server connection (Node\'s parser for incoming requests)',
+  HTTPCLIENTREQUEST: 'data on an HTTP client connection (Node\'s parser for the response to your request)',
+  MESSAGEPORT: 'a message arriving on a <code>MessagePort</code> (for example from a worker thread)',
+  WORKER: 'a worker thread exiting',
+  PBKDF2REQUEST: 'a <code>crypto.pbkdf2</code> key derivation',
+  RANDOMBYTESREQUEST: 'a <code>crypto.randomBytes</code> call',
+  QUERYWRAP: 'a DNS query (<code>dns.resolve*</code>)',
+};
+
+// Where a provider's work ran, told after the sentence that names it so the
+// aside doesn't split that sentence.
+const POOL = 'The work ran on libuv\'s thread pool (4 threads by default).';
+const PROVIDER_WHERE = {
+  FSREQCALLBACK: POOL, FSREQPROMISE: POOL, GETADDRINFOREQWRAP: POOL, ZLIB: POOL,
+  PBKDF2REQUEST: POOL, RANDOMBYTESREQUEST: POOL,
+  QUERYWRAP: 'The query went over the network through c-ares, not the thread pool.',
 };
 
 const STARVE_JOBS = 100; // chained nextTicks/microtasks flagged as starving the loop
@@ -1174,6 +1191,7 @@ const RESOURCES = {
   GetNameInfoReqWrap: ['reverse DNS lookup in progress', 'reverse DNS lookups in progress'],
   WriteWrap: ['stream write in progress', 'stream writes in progress'],
   ShutdownWrap: ['stream shutdown in progress', 'stream shutdowns in progress'],
+  ConnectWrap: ['connection being opened', 'connections being opened'],
   MessagePort: ['MessagePort', 'MessagePorts'],
   Worker: ['worker thread', 'worker threads'],
 };
@@ -1907,7 +1925,8 @@ function ruleFor(e, idx, state) {
   if (e.kind === 'phase' && e.begin && PHASE_WHY[e.phase]) return `The <b>${e.phase}</b> phase ${PHASE_WHY[e.phase]}`;
   if (e.kind === 'io' && e.begin) {
     const what = PROVIDERS[e.provider] ?? esc(e.provider);
-    return `Poll phase: libuv reported that ${what} completed, so Node calls its JavaScript callback now.`;
+    return `Poll phase: libuv reported that ${what} completed, so Node calls its JavaScript callback now.` +
+      (PROVIDER_WHERE[e.provider] ? ` ${PROVIDER_WHERE[e.provider]}` : '');
   }
   if (e.kind === 'drain')
     return e.what === 'ticks'
